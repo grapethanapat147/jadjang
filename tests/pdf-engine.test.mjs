@@ -7,11 +7,13 @@ import {
   IMAGE_PAGE_MARGIN,
   buildPdf,
   fillPageBox,
+  findOrphanedSourceIds,
   fitImageOnA4,
   mimeTypeForSource,
   movePage,
   splitPdfPages,
   validateInputFiles,
+  verifyPdfPageCount,
 } from "../app/lib/pdf-engine.ts";
 
 // Smallest valid PNG (1x1, opaque) so image paths can be exercised without a browser.
@@ -143,4 +145,37 @@ test("builds image PDFs on A4 pages", async () => {
   const { width, height } = verified.getPage(0).getSize();
   assert.ok(Math.abs(width - A4_SHORT_EDGE) < 0.01, `expected A4 width, got ${width}`);
   assert.ok(Math.abs(height - A4_LONG_EDGE) < 0.01, `expected A4 height, got ${height}`);
+});
+
+test("reports the sources that no remaining page uses", () => {
+  const sourceIds = ["one", "two", "three"];
+  const remainingPages = [
+    { sourceId: "one" },
+    { sourceId: "three" },
+  ];
+  assert.deepEqual(findOrphanedSourceIds(sourceIds, remainingPages), ["two"]);
+});
+
+test("reports every source once the last page is gone", () => {
+  assert.deepEqual(findOrphanedSourceIds(["one", "two"], []), ["one", "two"]);
+});
+
+test("keeps a source that still has another page", () => {
+  const pages = [{ sourceId: "one" }, { sourceId: "one" }];
+  assert.deepEqual(findOrphanedSourceIds(["one"], pages), []);
+});
+
+test("accepts a result whose page count matches", async () => {
+  const bytes = new Uint8Array(await samplePdf(3));
+  await verifyPdfPageCount(bytes, 3);
+});
+
+test("blocks a result whose page count is short", async () => {
+  const bytes = new Uint8Array(await samplePdf(2));
+  await assert.rejects(() => verifyPdfPageCount(bytes, 3), /มี 2 หน้า แต่ควรมี 3 หน้า/);
+});
+
+test("blocks a split file that is not a single page", async () => {
+  const bytes = new Uint8Array(await samplePdf(2));
+  await assert.rejects(() => verifyPdfPageCount(bytes, 1), /หยุดดาวน์โหลด/);
 });

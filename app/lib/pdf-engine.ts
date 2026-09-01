@@ -57,6 +57,29 @@ export function validateInputFiles(files: UploadCandidate[]) {
   return null;
 }
 
+/**
+ * Source ids that no page refers to any more, so their bytes and cached
+ * documents can be released instead of sitting in memory for the whole session.
+ */
+export function findOrphanedSourceIds(
+  sourceIds: string[],
+  pages: Array<Pick<PageRecord, "sourceId">>,
+): string[] {
+  const stillUsed = new Set(pages.map((page) => page.sourceId));
+  return sourceIds.filter((id) => !stillUsed.has(id));
+}
+
+export async function verifyPdfPageCount(bytes: Uint8Array, expectedPages: number): Promise<void> {
+  const { PDFDocument } = await import("pdf-lib");
+  const document = await PDFDocument.load(bytes, { updateMetadata: false });
+  const actualPages = document.getPageCount();
+  if (actualPages !== expectedPages) {
+    throw new Error(
+      `ผลลัพธ์มี ${actualPages} หน้า แต่ควรมี ${expectedPages} หน้า ระบบจึงหยุดดาวน์โหลดเพื่อความปลอดภัย`,
+    );
+  }
+}
+
 export function movePage<T>(items: T[], from: number, to: number) {
   if (from < 0 || from >= items.length || to < 0 || to >= items.length || from === to) return items;
   const next = [...items];

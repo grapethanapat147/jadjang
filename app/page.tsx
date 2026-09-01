@@ -13,12 +13,14 @@ import {
   MAX_PAGES,
   buildPdf,
   fillPageBox,
+  findOrphanedSourceIds,
   fitImageOnA4,
   formatBytes,
   mimeTypeForSource,
   movePage,
   splitPdfPages,
   validateInputFiles,
+  verifyPdfPageCount,
   type PageRecord,
   type SourceRecord,
   type UploadCandidate,
@@ -29,6 +31,7 @@ import {
   type AutoClearTimer,
 } from "./lib/auto-clear";
 import { yieldToBrowser } from "./lib/yield-to-browser";
+import { isImageOfFormat, readArchiveEntryCount } from "./lib/verify-output";
 
 type ToolId = "organize" | "merge" | "split" | "compress" | "convert";
 type CompressionLevel = "small" | "balanced" | "quality";
@@ -241,6 +244,23 @@ export default function Home() {
     return canvas.toDataURL("image/jpeg", 0.7);
   }
 
+  function releasePreviewUrl(url?: string) {
+    if (!url || !previewUrls.current.has(url)) {
+      return;
+    }
+    URL.revokeObjectURL(url);
+    previewUrls.current.delete(url);
+  }
+
+  function releaseSource(sourceId: string) {
+    const cached = pdfCache.current.get(sourceId);
+    if (!cached) {
+      return;
+    }
+    cached.then((document) => document.destroy()).catch(() => undefined);
+    pdfCache.current.delete(sourceId);
+  }
+
   async function clearWorkspace() {
     autoClear.cancel();
     previewUrls.current.forEach((url) => URL.revokeObjectURL(url));
@@ -313,9 +333,10 @@ export default function Home() {
     setResult(null);
     setProgress({ label: "กำลังอ่านไฟล์อย่างปลอดภัย", percent: 5 });
 
+    const newSources: SourceRecord[] = [];
+    const newPages: WorkspacePage[] = [];
+
     try {
-      const newSources: SourceRecord[] = [];
-      const newPages: WorkspacePage[] = [];
       let discoveredPages = pages.length;
 
       for (let fileIndex = 0; fileIndex < incoming.length; fileIndex += 1) {
@@ -383,6 +404,10 @@ export default function Home() {
         workspaceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 350);
     } catch (caught) {
+      // Nothing from this batch reached state, so release what it already
+      // allocated instead of leaving parsed documents in memory for the session.
+      newPages.forEach((page) => releasePreviewUrl(page.previewUrl));
+      newSources.forEach((source) => releaseSource(source.id));
       setError(friendlyError(caught));
       setProgress(null);
     } finally {
@@ -407,15 +432,27 @@ export default function Home() {
   }
 
   function removePage(id: string) {
-    setPages((items) => {
-      if (items.length === 1) {
-        setError("เอกสารต้องเหลืออย่างน้อย 1 หน้า");
-        return items;
-      }
-      const next = items.filter((item) => item.id !== id);
-      setCurrentPageId((value) => (value === id ? next[0]?.id ?? null : value));
-      return next;
-    });
+    if (pages.length === 1) {
+      setError("เอกสารต้องเหลืออย่างน้อย 1 หน้า");
+      return;
+    }
+
+    const removed = pages.find((page) => page.id === id);
+    const remaining = pages.filter((page) => page.id !== id);
+    const orphanedSourceIds = findOrphanedSourceIds(
+      sources.map((source) => source.id),
+      remaining,
+    );
+
+    releasePreviewUrl(removed?.previewUrl);
+    orphanedSourceIds.forEach((sourceId) => releaseSource(sourceId));
+
+    setPages(remaining);
+    if (orphanedSourceIds.length) {
+      const dropped = new Set(orphanedSourceIds);
+      setSources((items) => items.filter((source) => !dropped.has(source.id)));
+    }
+    setCurrentPageId((value) => (value === id ? remaining[0]?.id ?? null : value));
     setSelectedIds((items) => {
       const next = new Set(items);
       next.delete(id);
@@ -474,6 +511,12 @@ export default function Home() {
       const { canvas } = await renderOutputCanvas(pages[index], convertFormat === "png" ? 1.5 : 1.25);
       const mime = convertFormat === "png" ? "image/png" : "image/jpeg";
       const blob = await canvasToBlob(canvas, mime, convertFormat === "jpg" ? 0.82 : undefined);
+      const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
+      if (!blob.size || !isImageOfFormat(head, convertFormat)) {
+        throw new Error(
+          `สร้างภาพของหน้า ${index + 1} ไม่สำเร็จ ระบบจึงหยุดดาวน์โหลดเพื่อความปลอดภัย`,
+        );
+      }
       zip.file(`page-${String(index + 1).padStart(3, "0")}.${convertFormat}`, blob);
       setProgress({
         label: `กำลังแปลงหน้า ${index + 1} จาก ${pages.length}`,
@@ -481,17 +524,25 @@ export default function Home() {
       });
       if (index % 3 === 0) await yieldToBrowser();
     }
-    return zip.generateAsync(
+    const blob = await zip.generateAsync(
       { type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } },
       ({ percent }) => setProgress({ label: "กำลังรวมรูปเป็นไฟล์ ZIP", percent: 82 + Math.round(percent * 0.16) }),
     );
+    return { blob, entryCount: pages.length };
   }
 
-  async function verifyPdf(bytes: Uint8Array, expectedPages: number) {
-    const { PDFDocument } = await import("pdf-lib");
-    const document = await PDFDocument.load(bytes, { updateMetadata: false });
-    if (document.getPageCount() !== expectedPages) {
-      throw new Error("ผลลัพธ์มีจำนวนหน้าไม่ครบ ระบบจึงหยุดดาวน์โหลดเพื่อความปลอดภัย");
+  /**
+   * Reads the archive's own end-of-central-directory record rather than loading
+   * the whole result back into memory, so checking a 150 MB output stays cheap.
+   */
+  async function verifyArchiveEntryCount(blob: Blob, expectedEntries: number) {
+    const tailSize = Math.min(blob.size, 1_024);
+    const tail = new Uint8Array(await blob.slice(blob.size - tailSize).arrayBuffer());
+    const actualEntries = readArchiveEntryCount(tail);
+    if (actualEntries !== expectedEntries) {
+      throw new Error(
+        `ไฟล์ ZIP มี ${actualEntries} ไฟล์ แต่ควรมี ${expectedEntries} ไฟล์ ระบบจึงหยุดดาวน์โหลดเพื่อความปลอดภัย`,
+      );
     }
   }
 
@@ -514,7 +565,7 @@ export default function Home() {
         if (!selected.length) throw new Error("กรุณาเลือกหน้าที่ต้องการแยกอย่างน้อย 1 หน้า");
         if (selected.length === 1) {
           const bytes = await buildPdf(sources, selected);
-          await verifyPdf(bytes, 1);
+          await verifyPdfPageCount(bytes, 1);
           setDownloadResult(
             new Blob([bytes as BlobPart], { type: "application/pdf" }),
             "จัดแจง-หน้าที่เลือก.pdf",
@@ -524,21 +575,30 @@ export default function Home() {
           );
         } else {
           const files = await splitPdfPages(sources, selected);
+          for (let index = 0; index < files.length; index += 1) {
+            setProgress({
+              label: `กำลังตรวจไฟล์ที่ ${index + 1} จาก ${files.length}`,
+              percent: 40 + Math.round(((index + 1) / files.length) * 45),
+            });
+            await verifyPdfPageCount(files[index].bytes, 1);
+            if (index % 8 === 0) await yieldToBrowser();
+          }
           const { default: JSZip } = await import("jszip");
           const zip = new JSZip();
           files.forEach((file) => zip.file(file.name, file.bytes));
           const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+          await verifyArchiveEntryCount(blob, files.length);
           setDownloadResult(
             blob,
             "จัดแจง-แยกหน้า.zip",
             "zip",
-            `ตรวจสอบแล้ว: ภายในมี PDF จำนวน ${files.length} ไฟล์`,
+            `ตรวจสอบแล้ว: ภายในมี PDF หน้าละไฟล์ ครบ ${files.length} ไฟล์`,
             files.length,
           );
         }
       } else if (activeTool === "compress") {
         const bytes = await makeCompressedPdf();
-        await verifyPdf(bytes, pages.length);
+        await verifyPdfPageCount(bytes, pages.length);
         const difference = totalInputSize - bytes.length;
         const note =
           difference > 0
@@ -552,17 +612,18 @@ export default function Home() {
           pages.length,
         );
       } else if (activeTool === "convert" && hasPdf) {
-        const blob = await makeImageArchive();
+        const { blob, entryCount } = await makeImageArchive();
+        await verifyArchiveEntryCount(blob, entryCount);
         setDownloadResult(
           blob,
           `จัดแจง-${convertFormat.toUpperCase()}.zip`,
           "zip",
-          `แปลงครบ ${pages.length} หน้าเป็น ${convertFormat.toUpperCase()}`,
-          pages.length,
+          `ตรวจสอบแล้ว: ภายในมีภาพ ${convertFormat.toUpperCase()} ครบ ${entryCount} ไฟล์`,
+          entryCount,
         );
       } else {
         const bytes = await buildPdf(sources, pages);
-        await verifyPdf(bytes, pages.length);
+        await verifyPdfPageCount(bytes, pages.length);
         setDownloadResult(
           new Blob([bytes as BlobPart], { type: "application/pdf" }),
           onlyImages ? "จัดแจง-จากรูป.pdf" : "จัดแจง-พร้อมส่ง.pdf",
