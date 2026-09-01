@@ -2,11 +2,32 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { PDFDocument } from "pdf-lib";
 import {
+  A4_LONG_EDGE,
+  A4_SHORT_EDGE,
+  IMAGE_PAGE_MARGIN,
   buildPdf,
+  fillPageBox,
+  fitImageOnA4,
+  mimeTypeForSource,
   movePage,
   splitPdfPages,
   validateInputFiles,
 } from "../app/lib/pdf-engine.ts";
+
+// Smallest valid PNG (1x1, opaque) so image paths can be exercised without a browser.
+const ONE_PIXEL_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+function pngSource() {
+  const buffer = Buffer.from(ONE_PIXEL_PNG, "base64");
+  return {
+    id: "image",
+    name: "photo.png",
+    type: "png",
+    bytes: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
+    size: buffer.byteLength,
+  };
+}
 
 async function samplePdf(pageCount) {
   const document = await PDFDocument.create();
@@ -60,4 +81,66 @@ test("splits selected pages into one-page PDFs", async () => {
   for (const result of results) {
     assert.equal((await PDFDocument.load(result.bytes)).getPageCount(), 1);
   }
+});
+
+test("keeps compressed image pages on A4 instead of raw pixel sizes", () => {
+  // Regression: a 12MP photo used to become a 4000 x 3000 pt (55 x 41 inch) page.
+  const box = fitImageOnA4(4000, 3000);
+
+  assert.equal(box.pageWidth, A4_LONG_EDGE, "a landscape photo gets a landscape page");
+  assert.equal(box.pageHeight, A4_SHORT_EDGE);
+  assert.ok(box.drawWidth <= box.pageWidth - IMAGE_PAGE_MARGIN * 2 + 1e-9, "stays inside the margin");
+  assert.ok(box.drawHeight <= box.pageHeight - IMAGE_PAGE_MARGIN * 2 + 1e-9);
+  assert.ok(Math.abs(box.drawWidth / box.drawHeight - 4000 / 3000) < 1e-9, "keeps aspect ratio");
+  assert.ok(Math.abs(box.x * 2 + box.drawWidth - box.pageWidth) < 1e-9, "centered horizontally");
+  assert.ok(Math.abs(box.y * 2 + box.drawHeight - box.pageHeight) < 1e-9, "centered vertically");
+});
+
+test("gives portrait images a portrait A4 page", () => {
+  const box = fitImageOnA4(1200, 1600);
+  assert.equal(box.pageWidth, A4_SHORT_EDGE);
+  assert.equal(box.pageHeight, A4_LONG_EDGE);
+});
+
+test("leaves PDF page dimensions untouched", () => {
+  assert.deepEqual(fillPageBox(A4_SHORT_EDGE, A4_LONG_EDGE), {
+    pageWidth: A4_SHORT_EDGE,
+    pageHeight: A4_LONG_EDGE,
+    drawWidth: A4_SHORT_EDGE,
+    drawHeight: A4_LONG_EDGE,
+    x: 0,
+    y: 0,
+  });
+});
+
+test("still accepts an already added file that has no extension", () => {
+  // Scanners and mobile share sheets hand over files with a MIME type but no extension.
+  const firstUpload = [{ name: "scan", size: 1000, type: "application/pdf" }];
+  assert.equal(validateInputFiles(firstUpload), null);
+
+  // Adding more files re-validates the sources already in the workspace.
+  const secondUpload = [
+    { name: "scan", size: 1000, type: mimeTypeForSource("pdf") },
+    { name: "second.pdf", size: 1000, type: "application/pdf" },
+  ];
+  assert.equal(validateInputFiles(secondUpload), null);
+});
+
+test("maps every source type to a real MIME type", () => {
+  assert.equal(mimeTypeForSource("pdf"), "application/pdf");
+  assert.equal(mimeTypeForSource("png"), "image/png");
+  assert.equal(mimeTypeForSource("jpg"), "image/jpeg");
+});
+
+test("builds image PDFs on A4 pages", async () => {
+  const source = pngSource();
+  const output = await buildPdf([source], [
+    { id: "p1", sourceId: source.id, pageNumber: 1, rotation: 0 },
+  ]);
+
+  const verified = await PDFDocument.load(output);
+  assert.equal(verified.getPageCount(), 1);
+  const { width, height } = verified.getPage(0).getSize();
+  assert.ok(Math.abs(width - A4_SHORT_EDGE) < 0.01, `expected A4 width, got ${width}`);
+  assert.ok(Math.abs(height - A4_LONG_EDGE) < 0.01, `expected A4 height, got ${height}`);
 });

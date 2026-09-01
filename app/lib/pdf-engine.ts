@@ -5,6 +5,10 @@ export const MAX_TOTAL_BYTES = 150 * 1024 * 1024;
 export const MAX_SINGLE_BYTES = 120 * 1024 * 1024;
 export const MAX_PAGES = 250;
 
+export const A4_SHORT_EDGE = 595.28;
+export const A4_LONG_EDGE = 841.89;
+export const IMAGE_PAGE_MARGIN = 24;
+
 export type SourceRecord = {
   id: string;
   name: string;
@@ -20,7 +24,7 @@ export type PageRecord = {
   rotation: number;
 };
 
-type UploadCandidate = Pick<File, "name" | "size" | "type">;
+export type UploadCandidate = Pick<File, "name" | "size" | "type">;
 type PdfDocumentFactory = {
   load(
     bytes: ArrayBuffer,
@@ -61,6 +65,58 @@ export function movePage<T>(items: T[], from: number, to: number) {
   return next;
 }
 
+export type PageBox = {
+  pageWidth: number;
+  pageHeight: number;
+  drawWidth: number;
+  drawHeight: number;
+  x: number;
+  y: number;
+};
+
+export function mimeTypeForSource(type: SourceRecord["type"]): string {
+  if (type === "pdf") return "application/pdf";
+  if (type === "png") return "image/png";
+  return "image/jpeg";
+}
+
+/**
+ * Page box for raster output whose dimensions are already PDF points,
+ * so the rendered page keeps the size of the page it came from.
+ */
+export function fillPageBox(widthInPoints: number, heightInPoints: number): PageBox {
+  const pageWidth = Math.max(1, widthInPoints);
+  const pageHeight = Math.max(1, heightInPoints);
+  return { pageWidth, pageHeight, drawWidth: pageWidth, drawHeight: pageHeight, x: 0, y: 0 };
+}
+
+/**
+ * Centers an image measured in pixels on an A4 page measured in points,
+ * keeping its aspect ratio. Without this, pixel counts leak into page sizes.
+ */
+export function fitImageOnA4(
+  imageWidth: number,
+  imageHeight: number,
+  margin: number = IMAGE_PAGE_MARGIN,
+): PageBox {
+  const width = Math.max(1, imageWidth);
+  const height = Math.max(1, imageHeight);
+  const isLandscape = width > height;
+  const pageWidth = isLandscape ? A4_LONG_EDGE : A4_SHORT_EDGE;
+  const pageHeight = isLandscape ? A4_SHORT_EDGE : A4_LONG_EDGE;
+  const scale = Math.min((pageWidth - margin * 2) / width, (pageHeight - margin * 2) / height);
+  const drawWidth = width * scale;
+  const drawHeight = height * scale;
+  return {
+    pageWidth,
+    pageHeight,
+    drawWidth,
+    drawHeight,
+    x: (pageWidth - drawWidth) / 2,
+    y: (pageHeight - drawHeight) / 2,
+  };
+}
+
 function normalizeRotation(value: number) {
   const normalized = value % 360;
   return normalized < 0 ? normalized + 360 : normalized;
@@ -91,19 +147,13 @@ async function appendPage(
 
   const data = new Uint8Array(source.bytes.slice(0));
   const image = source.type === "png" ? await output.embedPng(data) : await output.embedJpg(data);
-  const isLandscape = image.width > image.height;
-  const pageWidth = isLandscape ? 841.89 : 595.28;
-  const pageHeight = isLandscape ? 595.28 : 841.89;
-  const margin = 24;
-  const scale = Math.min((pageWidth - margin * 2) / image.width, (pageHeight - margin * 2) / image.height);
-  const width = image.width * scale;
-  const height = image.height * scale;
-  const imagePage = output.addPage([pageWidth, pageHeight]);
+  const box = fitImageOnA4(image.width, image.height);
+  const imagePage = output.addPage([box.pageWidth, box.pageHeight]);
   imagePage.drawImage(image, {
-    x: (pageWidth - width) / 2,
-    y: (pageHeight - height) / 2,
-    width,
-    height,
+    x: box.x,
+    y: box.y,
+    width: box.drawWidth,
+    height: box.drawHeight,
   });
   imagePage.setRotation(degrees(normalizeRotation(page.rotation)));
 }

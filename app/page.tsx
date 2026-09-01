@@ -12,13 +12,23 @@ import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
   MAX_PAGES,
   buildPdf,
+  fillPageBox,
+  fitImageOnA4,
   formatBytes,
+  mimeTypeForSource,
   movePage,
   splitPdfPages,
   validateInputFiles,
   type PageRecord,
   type SourceRecord,
+  type UploadCandidate,
 } from "./lib/pdf-engine";
+import {
+  AUTO_CLEAR_DELAY_SECONDS,
+  createAutoClearTimer,
+  type AutoClearTimer,
+} from "./lib/auto-clear";
+import { yieldToBrowser } from "./lib/yield-to-browser";
 
 type ToolId = "organize" | "merge" | "split" | "compress" | "convert";
 type CompressionLevel = "small" | "balanced" | "quality";
@@ -128,6 +138,7 @@ export default function Home() {
   const pdfCache = useRef<Map<string, Promise<PdfDocumentLike>>>(new Map());
   const previewUrls = useRef<Set<string>>(new Set());
   const resultUrl = useRef<string | null>(null);
+  const [autoClear] = useState<AutoClearTimer>(() => createAutoClearTimer());
 
   const totalInputSize = useMemo(
     () => sources.reduce((sum, source) => sum + source.size, 0),
@@ -173,9 +184,7 @@ export default function Home() {
   }
 
   async function renderImageCanvas(source: SourceRecord, page: WorkspacePage, maxEdge: number) {
-    const blob = new Blob([source.bytes], {
-      type: source.type === "png" ? "image/png" : "image/jpeg",
-    });
+    const blob = new Blob([source.bytes], { type: mimeTypeForSource(source.type) });
     const image = await createImageBitmap(blob);
     const rotation = ((page.rotation % 360) + 360) % 360;
     const rotated = rotation === 90 || rotation === 270;
@@ -204,17 +213,26 @@ export default function Home() {
     return { canvas, width: rawWidth, height: rawHeight };
   }
 
+  /**
+   * Always returns a page box in PDF points. renderPdfCanvas measures in points
+   * but renderImageCanvas measures in pixels, so the image side must be fitted
+   * before the value can be used as a page size.
+   */
   async function renderOutputCanvas(page: WorkspacePage, scale: number) {
     const source = sources.find((item) => item.id === page.sourceId);
     if (!source) throw new Error("ไม่พบไฟล์ต้นฉบับ");
-    if (source.type === "pdf") return renderPdfCanvas(source, page, scale);
-    return renderImageCanvas(source, page, Math.round(1_250 * scale));
+    if (source.type === "pdf") {
+      const rendered = await renderPdfCanvas(source, page, scale);
+      return { canvas: rendered.canvas, pageBox: fillPageBox(rendered.width, rendered.height) };
+    }
+    const rendered = await renderImageCanvas(source, page, Math.round(1_250 * scale));
+    return { canvas: rendered.canvas, pageBox: fitImageOnA4(rendered.width, rendered.height) };
   }
 
   async function makePreview(source: SourceRecord, page: WorkspacePage) {
     if (source.type !== "pdf") {
       const url = URL.createObjectURL(
-        new Blob([source.bytes], { type: source.type === "png" ? "image/png" : "image/jpeg" }),
+        new Blob([source.bytes], { type: mimeTypeForSource(source.type) }),
       );
       previewUrls.current.add(url);
       return url;
@@ -224,6 +242,7 @@ export default function Home() {
   }
 
   async function clearWorkspace() {
+    autoClear.cancel();
     previewUrls.current.forEach((url) => URL.revokeObjectURL(url));
     previewUrls.current.clear();
     if (resultUrl.current) URL.revokeObjectURL(resultUrl.current);
@@ -246,10 +265,11 @@ export default function Home() {
   useEffect(() => {
     const urls = previewUrls.current;
     return () => {
+      autoClear.cancel();
       urls.forEach((url) => URL.revokeObjectURL(url));
       if (resultUrl.current) URL.revokeObjectURL(resultUrl.current);
     };
-  }, []);
+  }, [autoClear]);
 
   useEffect(() => {
     if (!currentPage || currentPage.previewUrl) return;
@@ -273,16 +293,21 @@ export default function Home() {
   }, [currentPageId]);
 
   async function addFiles(incoming: File[]) {
-    const candidates = [
-      ...sources.map((source) => ({ name: source.name, size: source.size, type: source.type })),
+    const candidates: UploadCandidate[] = [
+      ...sources.map((source) => ({
+        name: source.name,
+        size: source.size,
+        type: mimeTypeForSource(source.type),
+      })),
       ...incoming,
     ];
-    const validationError = validateInputFiles(candidates as File[]);
+    const validationError = validateInputFiles(candidates);
     if (validationError) {
       setError(validationError);
       return;
     }
 
+    autoClear.cancel();
     setIsBusy(true);
     setError(null);
     setResult(null);
@@ -318,7 +343,7 @@ export default function Home() {
               page.previewUrl = await makePreview(source, page);
             }
             newPages.push(page);
-            if (pageNumber % 8 === 0) await new Promise(requestAnimationFrame);
+            if (pageNumber % 8 === 0) await yieldToBrowser();
             setProgress({
               label: `กำลังสร้าง Preview: ${file.name}`,
               percent: Math.min(88, 10 + Math.round(((fileIndex + pageNumber / document.numPages) / incoming.length) * 76)),
@@ -418,16 +443,21 @@ export default function Home() {
     const setting = compressionSettings[compressionLevel];
     const output = await PDFDocument.create();
     for (let index = 0; index < pages.length; index += 1) {
-      const { canvas, width, height } = await renderOutputCanvas(pages[index], setting.scale);
+      const { canvas, pageBox } = await renderOutputCanvas(pages[index], setting.scale);
       const blob = await canvasToBlob(canvas, "image/jpeg", setting.quality);
       const image = await output.embedJpg(await blob.arrayBuffer());
-      const outputPage = output.addPage([Math.max(1, width), Math.max(1, height)]);
-      outputPage.drawImage(image, { x: 0, y: 0, width, height });
+      const outputPage = output.addPage([pageBox.pageWidth, pageBox.pageHeight]);
+      outputPage.drawImage(image, {
+        x: pageBox.x,
+        y: pageBox.y,
+        width: pageBox.drawWidth,
+        height: pageBox.drawHeight,
+      });
       setProgress({
         label: `กำลังบีบอัดหน้า ${index + 1} จาก ${pages.length}`,
         percent: Math.round(((index + 1) / pages.length) * 88),
       });
-      if (index % 3 === 0) await new Promise(requestAnimationFrame);
+      if (index % 3 === 0) await yieldToBrowser();
     }
     output.setTitle("จัดแจง — ไฟล์บีบอัด");
     output.setProducer("จัดแจง");
@@ -449,7 +479,7 @@ export default function Home() {
         label: `กำลังแปลงหน้า ${index + 1} จาก ${pages.length}`,
         percent: Math.round(((index + 1) / pages.length) * 82),
       });
-      if (index % 3 === 0) await new Promise(requestAnimationFrame);
+      if (index % 3 === 0) await yieldToBrowser();
     }
     return zip.generateAsync(
       { type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } },
@@ -474,6 +504,7 @@ export default function Home() {
 
   async function processDocument() {
     if (!pages.length || isBusy) return;
+    autoClear.cancel();
     setIsBusy(true);
     setError(null);
     setProgress({ label: "กำลังเตรียมเอกสาร", percent: 3 });
@@ -790,9 +821,9 @@ export default function Home() {
           <div className="download-result" id="download-result">
             <div className="result-icon">✓</div>
             <div className="result-copy"><p>พร้อมดาวน์โหลด</p><h3>{result.name}</h3><span>{formatBytes(result.size)} · {result.note}</span></div>
-            <a className="download-button" href={result.url} download={result.name} onClick={() => window.setTimeout(() => void clearWorkspace(), 45_000)}>ดาวน์โหลดไฟล์ <span>↓</span></a>
+            <a className="download-button" href={result.url} download={result.name} onClick={() => autoClear.schedule(() => void clearWorkspace())}>ดาวน์โหลดไฟล์ <span>↓</span></a>
             <button type="button" className="delete-now" onClick={() => void clearWorkspace()}>ดาวน์โหลดแล้ว ล้างไฟล์ทันที</button>
-            <small className="auto-clear-note">ระบบจะล้างพื้นที่ทำงานอัตโนมัติภายใน 45 วินาทีหลังเริ่มดาวน์โหลด</small>
+            <small className="auto-clear-note">ระบบจะล้างพื้นที่ทำงานอัตโนมัติภายใน {AUTO_CLEAR_DELAY_SECONDS} วินาทีหลังเริ่มดาวน์โหลด</small>
           </div>
         )}
       </section>
