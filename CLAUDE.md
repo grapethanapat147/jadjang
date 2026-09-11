@@ -27,7 +27,12 @@ Supported MVP workflows are page organization, PDF merging, page splitting, comp
 - Testable PDF operations and guardrails: `app/lib/pdf-engine.ts`.
 - Site metadata and Anuphan font: `app/layout.tsx`.
 - PDF primitives: `pdf-lib`; rendering/previews: `pdfjs-dist`; ZIP output: `jszip`.
-- Hosting metadata: `.openai/hosting.json`. It contains no runtime secret.
+- Deployment: Cloudflare Workers via Wrangler. `npm run deploy` rebuilds and ships the config that
+  `@cloudflare/vite-plugin` generates at `dist/server/wrangler.json`; do not hand-write a wrangler config
+  beside it. No D1, R2 or KV binding is needed, and the Images binding is optional - `/_vinext/image`
+  answers 501 without it, which is fine while the site uses plain `<img>` assets.
+- `.openai/hosting.json` is a leftover from the previous OpenAI Sites deployment. Nothing reads it any
+  more and it holds no secret.
 
 Avoid replacing the existing architecture or package manager unless the change is clearly necessary. Prefer small, testable increments.
 

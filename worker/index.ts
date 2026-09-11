@@ -4,8 +4,10 @@ import handler from "vinext/server/app-router-entry";
 
 interface Env {
   ASSETS: Fetcher;
-  DB: D1Database;
-  IMAGES: {
+  /** Optional: this site keeps no server-side state, so no database is bound. */
+  DB?: D1Database;
+  /** Optional: the Images binding is a paid Cloudflare feature. */
+  IMAGES?: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
         output(options: { format: string; quality: number }): Promise<{ response(): Response }>;
@@ -30,11 +32,19 @@ const worker = {
     const url = new URL(request.url);
 
     if (url.pathname === "/_vinext/image") {
+      const images = env.IMAGES;
+      if (!images) {
+        // The site serves its artwork as plain <img> assets and never calls this
+        // endpoint, so a deployment without the Images binding says so rather
+        // than failing on an undefined binding.
+        return new Response("ไม่ได้เปิดใช้การปรับขนาดภาพสำหรับการติดตั้งนี้", { status: 501 });
+      }
+
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
       return handleImageOptimization(request, {
         fetchAsset: (path) => env.ASSETS.fetch(new Request(new URL(path, request.url))),
         transformImage: async (body, { width, format, quality }) => {
-          const result = await env.IMAGES.input(body).transform(width > 0 ? { width } : {}).output({ format, quality });
+          const result = await images.input(body).transform(width > 0 ? { width } : {}).output({ format, quality });
           return result.response();
         },
       }, allowedWidths);

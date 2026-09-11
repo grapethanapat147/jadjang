@@ -47,5 +47,27 @@ npm test
 
 ## Deployment
 
-โปรเจกต์ใช้ `vinext` และ Cloudflare Worker-compatible output โดยมีการตั้งค่า Sites อยู่ใน `.openai/hosting.json`
+Deploy ขึ้น Cloudflare Workers ด้วย Wrangler
+
+```bash
+npx wrangler login
+npm run deploy
+```
+
+`npx wrangler login` ทำครั้งเดียวต่อเครื่อง จากนั้น `npm run deploy` จะ Build ใหม่แล้วส่งขึ้นตาม Config ที่
+`@cloudflare/vite-plugin` สร้างไว้ที่ `dist/server/wrangler.json` — Worker ชื่อ `jadjang` เสิร์ฟ Static asset
+จาก `dist/client` ไม่ต้องผูก D1, R2 หรือ KV เพราะไฟล์ของผู้ใช้ไม่เคยออกจากเบราว์เซอร์
+
+ตรวจ Artifact ก่อนส่งขึ้นจริงได้ด้วย
+
+```bash
+npm run build
+npx wrangler deploy --config dist/server/wrangler.json --dry-run
+npx wrangler dev --config dist/server/wrangler.json
+```
+
+`--dry-run` รายงานขนาดที่จะอัปโหลดโดยไม่ส่งจริงและไม่ต้อง Login ส่วน `wrangler dev` รัน Artifact ตัวเดียวกับที่จะ Deploy
+
+`.openai/hosting.json` เหลือไว้จากตอน Deploy ผ่าน OpenAI Sites ตอนนี้ไม่มีผลกับ Build แล้ว
+เก็บไว้เผื่อต้องกลับไปจัดการ Site เดิม และลบได้เมื่อไม่ต้องใช้
 
