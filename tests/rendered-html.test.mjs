@@ -43,3 +43,47 @@ test("emits site-specific social metadata", async () => {
   assert.match(html, /property="og:image" content="http:\/\/localhost\/og-jadjang\.png"/i);
   assert.match(html, /name="twitter:card" content="summary_large_image"/i);
 });
+
+test("ships the live regions empty so later messages are announced", async () => {
+  const html = await (await render()).text();
+
+  // A live region added to the page together with its text is not announced,
+  // so both regions must already be present, and empty, on first render.
+  const announcers = [...html.matchAll(/<div class="live-announcer"[^>]*>(.*?)<\/div>/g)];
+  assert.equal(announcers.length, 2, "one assertive and one polite region");
+  for (const [, contents] of announcers) {
+    assert.equal(contents, "", "regions must start empty");
+  }
+
+  assert.match(html, /<div class="live-announcer" role="alert" aria-live="assertive">/);
+  assert.match(html, /<div class="live-announcer" role="status" aria-live="polite">/);
+
+  // The visible notice and progress boxes must not double as live regions.
+  assert.doesNotMatch(html, /class="notice-wrap"[^>]*aria-live/);
+  assert.doesNotMatch(html, /class="progress-box"[^>]*aria-live/);
+});
+
+test("wires the tool tablist to a real tab panel", async () => {
+  const html = await (await render()).text();
+
+  const tabs = [...html.matchAll(/role="tab"/g)];
+  assert.equal(tabs.length, 5, "one tab per tool");
+
+  const panels = [...html.matchAll(/role="tabpanel"/g)];
+  assert.equal(panels.length, 1, "exactly one panel");
+  assert.match(html, /id="quick-preview"[^>]*role="tabpanel"/);
+
+  const controls = [...html.matchAll(/aria-controls="quick-preview"/g)];
+  assert.equal(controls.length, tabs.length, "every tab points at that panel");
+});
+
+test("exposes a single tab stop so arrow keys own the tablist", async () => {
+  const html = await (await render()).text();
+
+  const reachable = [...html.matchAll(/role="tab"[^>]*tabindex="0"/g)];
+  const skipped = [...html.matchAll(/role="tab"[^>]*tabindex="-1"/g)];
+
+  assert.equal(reachable.length, 1, "only the selected tool is in the tab order");
+  assert.equal(skipped.length, 4, "the rest are reached with arrow keys");
+  assert.match(html, /id="tool-tab-organize"[^>]*aria-selected="true"/);
+});

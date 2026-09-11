@@ -90,6 +90,20 @@ img { max-width: 100%; }
 .tools-section,
 .workspace-section,
 .notice-wrap { width: min(1240px, calc(100% - 40px)); margin-inline: auto; }
+
+/* Always in the DOM so screen readers announce changes; a live region added
+   together with its text is not announced at all. */
+.live-announcer {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .tools-section { padding: 64px 0 48px; }
 .tools-heading { display: flex; justify-content: space-between; align-items: end; gap: 48px; animation: page-rise .62s .06s cubic-bezier(.2,.8,.2,1) both; }
 .section-label { margin: 0 0 9px; color: var(--blue); font-size: 13px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }

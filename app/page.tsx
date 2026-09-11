@@ -3,6 +3,7 @@
 import {
   type ChangeEvent,
   type DragEvent,
+  type KeyboardEvent,
   useEffect,
   useMemo,
   useRef,
@@ -32,6 +33,7 @@ import {
 } from "./lib/auto-clear";
 import { yieldToBrowser } from "./lib/yield-to-browser";
 import { isImageOfFormat, readArchiveEntryCount } from "./lib/verify-output";
+import { nextToolIndex } from "./lib/tool-navigation";
 
 type ToolId = "organize" | "merge" | "split" | "compress" | "convert";
 type CompressionLevel = "small" | "balanced" | "quality";
@@ -138,6 +140,7 @@ export default function Home() {
   const [isBusy, setIsBusy] = useState(false);
 
   const workspaceRef = useRef<HTMLElement | null>(null);
+  const toolListRef = useRef<HTMLDivElement | null>(null);
   const pdfCache = useRef<Map<string, Promise<PdfDocumentLike>>>(new Map());
   const previewUrls = useRef<Set<string>>(new Set());
   const resultUrl = useRef<string | null>(null);
@@ -645,6 +648,42 @@ export default function Home() {
     }
   }
 
+  function selectTool(toolId: ToolId, options?: { revealWorkspace?: boolean }) {
+    setActiveTool(toolId);
+    setResult(null);
+    if (options?.revealWorkspace) {
+      workspaceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
+  /**
+   * Arrow, Home and End move between tools the way the WAI-ARIA tabs pattern
+   * expects. Selection follows focus, and the page is left where it is so
+   * stepping through the list does not scroll the tabs out of view.
+   */
+  function handleToolKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    const currentIndex = toolOptions.findIndex((tool) => tool.id === activeTool);
+    const targetIndex = nextToolIndex(event.key, currentIndex, toolOptions.length);
+    if (targetIndex === null) {
+      return;
+    }
+
+    event.preventDefault();
+    const targetTool = toolOptions[targetIndex];
+    selectTool(targetTool.id);
+    toolListRef.current
+      ?.querySelector<HTMLButtonElement>(`[data-tool="${targetTool.id}"]`)
+      ?.focus();
+  }
+
+  // ---------- #7: what the always-present live regions should say ----------
+  const politeAnnouncement = useMemo(() => {
+    if (result) return `ไฟล์พร้อมดาวน์โหลดแล้ว ${result.name} ${result.note}`;
+    if (warning) return warning;
+    if (isBusy) return "กำลังประมวลผลเอกสาร กรุณารอสักครู่";
+    return "";
+  }, [isBusy, result, warning]);
+
   const primaryAction = useMemo(() => {
     if (activeTool === "split") return `แยก ${selectedIds.size} หน้าที่เลือก`;
     if (activeTool === "compress") return "บีบอัดและตรวจผลลัพธ์";
@@ -655,6 +694,9 @@ export default function Home() {
 
   return (
     <main className="app-shell" id="top">
+      <div className="live-announcer" role="alert" aria-live="assertive">{error ?? ""}</div>
+      <div className="live-announcer" role="status" aria-live="polite">{politeAnnouncement}</div>
+
       <header className="site-header">
         <a className="brand" href="#top" aria-label="จัดแจง หน้าหลัก">
           <span className="brand-mark">จ</span>
@@ -671,21 +713,26 @@ export default function Home() {
           </div>
           <p>เลือกเครื่องมือ แล้วอัปโหลดไฟล์เพื่อดู Preview และจัดการต่อได้ทันที</p>
         </div>
-        <div className="tool-grid" role="tablist" aria-label="เลือกเครื่องมือ PDF">
+        <div
+          className="tool-grid"
+          role="tablist"
+          aria-label="เลือกเครื่องมือ PDF"
+          aria-orientation="horizontal"
+          ref={toolListRef}
+        >
           {toolOptions.map((tool) => (
             <button
               key={tool.id}
+              id={`tool-tab-${tool.id}`}
               type="button"
               role="tab"
               aria-selected={activeTool === tool.id}
               aria-controls="quick-preview"
+              tabIndex={activeTool === tool.id ? 0 : -1}
               data-tool={tool.id}
               className={`tool-card ${activeTool === tool.id ? "active" : ""}`}
-              onClick={() => {
-                setActiveTool(tool.id);
-                setResult(null);
-                workspaceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
+              onClick={() => selectTool(tool.id, { revealWorkspace: true })}
+              onKeyDown={handleToolKeyDown}
             >
               <span className="tool-icon-wrap">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -699,13 +746,13 @@ export default function Home() {
       </section>
 
       {(error || warning) && (
-        <section className="notice-wrap" aria-live="assertive">
+        <section className="notice-wrap">
           {error && <div className="notice error-notice"><div><strong>ทำรายการต่อไม่ได้</strong><p>{error}</p></div><button type="button" onClick={() => setError(null)} aria-label="ปิดข้อความผิดพลาด">ปิด</button></div>}
           {warning && <div className="notice warning-notice"><div><strong>โหมดไฟล์ขนาดใหญ่</strong><p>{warning}</p></div><button type="button" onClick={() => setWarning(null)} aria-label="ปิดคำเตือน">รับทราบ</button></div>}
         </section>
       )}
 
-      <section className="workspace-section" id="quick-preview" ref={workspaceRef} data-active-tool={activeTool} aria-labelledby="workspace-title">
+      <section className="workspace-section" id="quick-preview" role="tabpanel" ref={workspaceRef} data-active-tool={activeTool} aria-labelledby="workspace-title">
         <div className="workspace-heading">
           <div className="active-tool-heading">
             <span className="active-tool-icon" key={activeTool}>
@@ -875,7 +922,21 @@ export default function Home() {
           </div>
         )}
 
-        {progress && <div className="progress-box" role="status" aria-live="polite"><div><span>{progress.label}</span><strong>{progress.percent}%</strong></div><div className="progress-track"><span style={{ width: `${progress.percent}%` }} /></div></div>}
+        {progress && (
+          <div className="progress-box">
+            <div><span>{progress.label}</span><strong>{progress.percent}%</strong></div>
+            <div
+              className="progress-track"
+              role="progressbar"
+              aria-label={progress.label}
+              aria-valuenow={progress.percent}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <span style={{ width: `${progress.percent}%` }} />
+            </div>
+          </div>
+        )}
         <p className="privacy-note"><span className="lock-symbol">●</span>ประมวลผลในเบราว์เซอร์ ไม่มีการส่งไฟล์ขึ้นเซิร์ฟเวอร์</p>
 
         {result && (
