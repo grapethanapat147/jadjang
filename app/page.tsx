@@ -13,9 +13,7 @@ import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
   MAX_PAGES,
   buildPdf,
-  fillPageBox,
   findOrphanedSourceIds,
-  fitImageOnA4,
   formatBytes,
   mimeTypeForSource,
   movePage,
@@ -32,12 +30,18 @@ import {
   type AutoClearTimer,
 } from "./lib/auto-clear";
 import { yieldToBrowser } from "./lib/yield-to-browser";
-import { isImageOfFormat, readArchiveEntryCount } from "./lib/verify-output";
+import { verifyArchiveEntryCount, type ImageFormat } from "./lib/verify-output";
+import {
+  COMPRESSION_SETTINGS,
+  buildCompressedPdf,
+  buildImageArchive,
+  type CompressionLevel,
+  type OutputBuilderDeps,
+} from "./lib/output-builder";
 import { nextToolIndex } from "./lib/tool-navigation";
+import { canvasToBlob, createPageRenderer } from "./lib/page-renderer";
 
 type ToolId = "organize" | "merge" | "split" | "compress" | "convert";
-type CompressionLevel = "small" | "balanced" | "quality";
-type ConvertFormat = "jpg" | "png";
 
 type WorkspacePage = PageRecord & {
   fileName: string;
@@ -58,27 +62,6 @@ type ProgressState = {
   percent: number;
 };
 
-type PdfViewportLike = {
-  width: number;
-  height: number;
-  rotation?: number;
-};
-
-type PdfPageLike = {
-  getViewport(options: { scale: number; rotation?: number }): PdfViewportLike;
-  render(options: {
-    canvas: HTMLCanvasElement;
-    canvasContext: CanvasRenderingContext2D;
-    viewport: PdfViewportLike;
-  }): { promise: Promise<void> };
-};
-
-type PdfDocumentLike = {
-  numPages: number;
-  getPage(pageNumber: number): Promise<PdfPageLike>;
-  destroy(): Promise<void>;
-};
-
 const toolOptions: Array<{ id: ToolId; label: string; detail: string; icon: string }> = [
   { id: "organize", label: "จัดหน้า PDF", detail: "เรียง หมุน หรือลบหน้าให้พร้อมส่ง", icon: "/tool-icons/organize.png" },
   { id: "merge", label: "รวม PDF", detail: "รวมหลายไฟล์ตามลำดับเป็นไฟล์เดียว", icon: "/tool-icons/merge.png" },
@@ -87,27 +70,11 @@ const toolOptions: Array<{ id: ToolId; label: string; detail: string; icon: stri
   { id: "convert", label: "แปลงไฟล์", detail: "PDF เป็น JPG / PNG หรือรูปภาพเป็น PDF", icon: "/tool-icons/convert.png" },
 ];
 
-const compressionSettings: Record<CompressionLevel, { scale: number; quality: number; label: string }> = {
-  small: { scale: 1.05, quality: 0.52, label: "ไฟล์เล็ก" },
-  balanced: { scale: 1.35, quality: 0.68, label: "สมดุล" },
-  quality: { scale: 1.65, quality: 0.82, label: "คมชัด" },
-};
-
 function sourceType(file: File): SourceRecord["type"] {
   const extension = file.name.toLowerCase().split(".").pop();
   if (file.type === "application/pdf" || extension === "pdf") return "pdf";
   if (file.type === "image/png" || extension === "png") return "png";
   return "jpg";
-}
-
-function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number) {
-  return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error("ไม่สามารถสร้างภาพผลลัพธ์ได้"))),
-      type,
-      quality,
-    );
-  });
 }
 
 function friendlyError(error: unknown) {
@@ -131,7 +98,7 @@ export default function Home() {
   const [currentPageId, setCurrentPageId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<ToolId>("organize");
   const [compressionLevel, setCompressionLevel] = useState<CompressionLevel>("balanced");
-  const [convertFormat, setConvertFormat] = useState<ConvertFormat>("jpg");
+  const [convertFormat, setImageFormat] = useState<ImageFormat>("jpg");
   const [result, setResult] = useState<ResultFile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -141,9 +108,8 @@ export default function Home() {
 
   const workspaceRef = useRef<HTMLElement | null>(null);
   const toolListRef = useRef<HTMLDivElement | null>(null);
-  const pdfCache = useRef<Map<string, Promise<PdfDocumentLike>>>(new Map());
-  const previewUrls = useRef<Set<string>>(new Set());
   const resultUrl = useRef<string | null>(null);
+  const [renderer] = useState(() => createPageRenderer({ pdfWorkerSrc: pdfWorkerUrl }));
   const [autoClear] = useState<AutoClearTimer>(() => createAutoClearTimer());
 
   const totalInputSize = useMemo(
@@ -155,125 +121,11 @@ export default function Home() {
   const currentPage = pages.find((page) => page.id === currentPageId) ?? pages[0];
   const activeToolOption = toolOptions.find((tool) => tool.id === activeTool) ?? toolOptions[0];
 
-  async function getPdfDocument(source: SourceRecord) {
-    let cached = pdfCache.current.get(source.id);
-    if (!cached) {
-      cached = (async () => {
-        const pdfjs = await import("pdfjs-dist");
-        pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-        const loadingTask = pdfjs.getDocument({
-          data: new Uint8Array(source.bytes.slice(0)),
-          useWasm: true,
-        });
-        return (await loadingTask.promise) as unknown as PdfDocumentLike;
-      })();
-      pdfCache.current.set(source.id, cached);
-    }
-    return cached;
-  }
-
-  async function renderPdfCanvas(source: SourceRecord, page: WorkspacePage, scale: number) {
-    const pdfDocument = await getPdfDocument(source);
-    const pdfPage = await pdfDocument.getPage(page.pageNumber);
-    const base = pdfPage.getViewport({ scale: 1 });
-    const rotation = ((base.rotation ?? 0) + page.rotation) % 360;
-    const viewport = pdfPage.getViewport({ scale, rotation });
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.ceil(viewport.width));
-    canvas.height = Math.max(1, Math.ceil(viewport.height));
-    const context = canvas.getContext("2d", { alpha: false });
-    if (!context) throw new Error("อุปกรณ์นี้ไม่รองรับการสร้าง Preview");
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    await pdfPage.render({ canvas, canvasContext: context, viewport }).promise;
-    return { canvas, width: viewport.width / scale, height: viewport.height / scale };
-  }
-
-  async function renderImageCanvas(source: SourceRecord, page: WorkspacePage, maxEdge: number) {
-    const blob = new Blob([source.bytes], { type: mimeTypeForSource(source.type) });
-    const image = await createImageBitmap(blob);
-    const rotation = ((page.rotation % 360) + 360) % 360;
-    const rotated = rotation === 90 || rotation === 270;
-    const rawWidth = rotated ? image.height : image.width;
-    const rawHeight = rotated ? image.width : image.height;
-    const scale = Math.min(1, maxEdge / Math.max(rawWidth, rawHeight));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(rawWidth * scale));
-    canvas.height = Math.max(1, Math.round(rawHeight * scale));
-    const context = canvas.getContext("2d", { alpha: false });
-    if (!context) throw new Error("อุปกรณ์นี้ไม่รองรับการแปลงรูป");
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.save();
-    context.translate(canvas.width / 2, canvas.height / 2);
-    context.rotate((rotation * Math.PI) / 180);
-    context.drawImage(
-      image,
-      -(image.width * scale) / 2,
-      -(image.height * scale) / 2,
-      image.width * scale,
-      image.height * scale,
-    );
-    context.restore();
-    image.close();
-    return { canvas, width: rawWidth, height: rawHeight };
-  }
-
-  /**
-   * Always returns a page box in PDF points. renderPdfCanvas measures in points
-   * but renderImageCanvas measures in pixels, so the image side must be fitted
-   * before the value can be used as a page size.
-   */
-  async function renderOutputCanvas(page: WorkspacePage, scale: number) {
-    const source = sources.find((item) => item.id === page.sourceId);
-    if (!source) throw new Error("ไม่พบไฟล์ต้นฉบับ");
-    if (source.type === "pdf") {
-      const rendered = await renderPdfCanvas(source, page, scale);
-      return { canvas: rendered.canvas, pageBox: fillPageBox(rendered.width, rendered.height) };
-    }
-    const rendered = await renderImageCanvas(source, page, Math.round(1_250 * scale));
-    return { canvas: rendered.canvas, pageBox: fitImageOnA4(rendered.width, rendered.height) };
-  }
-
-  async function makePreview(source: SourceRecord, page: WorkspacePage) {
-    if (source.type !== "pdf") {
-      const url = URL.createObjectURL(
-        new Blob([source.bytes], { type: mimeTypeForSource(source.type) }),
-      );
-      previewUrls.current.add(url);
-      return url;
-    }
-    const { canvas } = await renderPdfCanvas(source, { ...page, rotation: 0 }, 0.32);
-    return canvas.toDataURL("image/jpeg", 0.7);
-  }
-
-  function releasePreviewUrl(url?: string) {
-    if (!url || !previewUrls.current.has(url)) {
-      return;
-    }
-    URL.revokeObjectURL(url);
-    previewUrls.current.delete(url);
-  }
-
-  function releaseSource(sourceId: string) {
-    const cached = pdfCache.current.get(sourceId);
-    if (!cached) {
-      return;
-    }
-    cached.then((document) => document.destroy()).catch(() => undefined);
-    pdfCache.current.delete(sourceId);
-  }
-
   async function clearWorkspace() {
     autoClear.cancel();
-    previewUrls.current.forEach((url) => URL.revokeObjectURL(url));
-    previewUrls.current.clear();
+    renderer.releaseAll();
     if (resultUrl.current) URL.revokeObjectURL(resultUrl.current);
     resultUrl.current = null;
-    for (const promise of pdfCache.current.values()) {
-      promise.then((document) => document.destroy()).catch(() => undefined);
-    }
-    pdfCache.current.clear();
     setSources([]);
     setPages([]);
     setSelectedIds(new Set());
@@ -286,20 +138,19 @@ export default function Home() {
   }
 
   useEffect(() => {
-    const urls = previewUrls.current;
     return () => {
       autoClear.cancel();
-      urls.forEach((url) => URL.revokeObjectURL(url));
+      renderer.releaseAll();
       if (resultUrl.current) URL.revokeObjectURL(resultUrl.current);
     };
-  }, [autoClear]);
+  }, [autoClear, renderer]);
 
   useEffect(() => {
     if (!currentPage || currentPage.previewUrl) return;
     const source = sources.find((item) => item.id === currentPage.sourceId);
     if (!source) return;
     let cancelled = false;
-    makePreview(source, currentPage)
+    renderer.createPreview(source, currentPage)
       .then((url) => {
         if (!cancelled) {
           setPages((items) =>
@@ -351,7 +202,7 @@ export default function Home() {
         newSources.push(source);
 
         if (type === "pdf") {
-          const document = await getPdfDocument(source);
+          const document = await renderer.loadDocument(source);
           if (discoveredPages + document.numPages > MAX_PAGES) {
             throw new Error(`รองรับได้สูงสุด ${MAX_PAGES} หน้าต่อครั้ง กรุณาแบ่งไฟล์เป็นชุดเล็กลง`);
           }
@@ -364,7 +215,7 @@ export default function Home() {
               fileName: file.name,
             };
             if (newPages.length < 36) {
-              page.previewUrl = await makePreview(source, page);
+              page.previewUrl = await renderer.createPreview(source, page);
             }
             newPages.push(page);
             if (pageNumber % 8 === 0) await yieldToBrowser();
@@ -383,7 +234,7 @@ export default function Home() {
             rotation: 0,
             fileName: file.name,
           };
-          page.previewUrl = await makePreview(source, page);
+          page.previewUrl = await renderer.createPreview(source, page);
           newPages.push(page);
           discoveredPages += 1;
         }
@@ -409,8 +260,8 @@ export default function Home() {
     } catch (caught) {
       // Nothing from this batch reached state, so release what it already
       // allocated instead of leaving parsed documents in memory for the session.
-      newPages.forEach((page) => releasePreviewUrl(page.previewUrl));
-      newSources.forEach((source) => releaseSource(source.id));
+      newPages.forEach((page) => renderer.releasePreview(page.previewUrl));
+      newSources.forEach((source) => renderer.releaseSource(source.id));
       setError(friendlyError(caught));
       setProgress(null);
     } finally {
@@ -447,8 +298,8 @@ export default function Home() {
       remaining,
     );
 
-    releasePreviewUrl(removed?.previewUrl);
-    orphanedSourceIds.forEach((sourceId) => releaseSource(sourceId));
+    renderer.releasePreview(removed?.previewUrl);
+    orphanedSourceIds.forEach((sourceId) => renderer.releaseSource(sourceId));
 
     setPages(remaining);
     if (orphanedSourceIds.length) {
@@ -478,77 +329,6 @@ export default function Home() {
     });
   }
 
-  async function makeCompressedPdf() {
-    const { PDFDocument } = await import("pdf-lib");
-    const setting = compressionSettings[compressionLevel];
-    const output = await PDFDocument.create();
-    for (let index = 0; index < pages.length; index += 1) {
-      const { canvas, pageBox } = await renderOutputCanvas(pages[index], setting.scale);
-      const blob = await canvasToBlob(canvas, "image/jpeg", setting.quality);
-      const image = await output.embedJpg(await blob.arrayBuffer());
-      const outputPage = output.addPage([pageBox.pageWidth, pageBox.pageHeight]);
-      outputPage.drawImage(image, {
-        x: pageBox.x,
-        y: pageBox.y,
-        width: pageBox.drawWidth,
-        height: pageBox.drawHeight,
-      });
-      setProgress({
-        label: `กำลังบีบอัดหน้า ${index + 1} จาก ${pages.length}`,
-        percent: Math.round(((index + 1) / pages.length) * 88),
-      });
-      if (index % 3 === 0) await yieldToBrowser();
-    }
-    output.setTitle("จัดแจง — ไฟล์บีบอัด");
-    output.setProducer("จัดแจง");
-    return output.save({ useObjectStreams: true });
-  }
-
-  async function makeImageArchive() {
-    if (convertFormat === "png" && pages.length > 60) {
-      throw new Error("การแปลง PNG จำกัด 60 หน้าต่อครั้ง กรุณาเลือก JPG หรือแบ่งไฟล์");
-    }
-    const { default: JSZip } = await import("jszip");
-    const zip = new JSZip();
-    for (let index = 0; index < pages.length; index += 1) {
-      const { canvas } = await renderOutputCanvas(pages[index], convertFormat === "png" ? 1.5 : 1.25);
-      const mime = convertFormat === "png" ? "image/png" : "image/jpeg";
-      const blob = await canvasToBlob(canvas, mime, convertFormat === "jpg" ? 0.82 : undefined);
-      const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
-      if (!blob.size || !isImageOfFormat(head, convertFormat)) {
-        throw new Error(
-          `สร้างภาพของหน้า ${index + 1} ไม่สำเร็จ ระบบจึงหยุดดาวน์โหลดเพื่อความปลอดภัย`,
-        );
-      }
-      zip.file(`page-${String(index + 1).padStart(3, "0")}.${convertFormat}`, blob);
-      setProgress({
-        label: `กำลังแปลงหน้า ${index + 1} จาก ${pages.length}`,
-        percent: Math.round(((index + 1) / pages.length) * 82),
-      });
-      if (index % 3 === 0) await yieldToBrowser();
-    }
-    const blob = await zip.generateAsync(
-      { type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } },
-      ({ percent }) => setProgress({ label: "กำลังรวมรูปเป็นไฟล์ ZIP", percent: 82 + Math.round(percent * 0.16) }),
-    );
-    return { blob, entryCount: pages.length };
-  }
-
-  /**
-   * Reads the archive's own end-of-central-directory record rather than loading
-   * the whole result back into memory, so checking a 150 MB output stays cheap.
-   */
-  async function verifyArchiveEntryCount(blob: Blob, expectedEntries: number) {
-    const tailSize = Math.min(blob.size, 1_024);
-    const tail = new Uint8Array(await blob.slice(blob.size - tailSize).arrayBuffer());
-    const actualEntries = readArchiveEntryCount(tail);
-    if (actualEntries !== expectedEntries) {
-      throw new Error(
-        `ไฟล์ ZIP มี ${actualEntries} ไฟล์ แต่ควรมี ${expectedEntries} ไฟล์ ระบบจึงหยุดดาวน์โหลดเพื่อความปลอดภัย`,
-      );
-    }
-  }
-
   function setDownloadResult(blob: Blob, name: string, type: ResultFile["type"], note: string, pageCount: number) {
     if (resultUrl.current) URL.revokeObjectURL(resultUrl.current);
     const url = URL.createObjectURL(blob);
@@ -562,6 +342,14 @@ export default function Home() {
     setIsBusy(true);
     setError(null);
     setProgress({ label: "กำลังเตรียมเอกสาร", percent: 3 });
+
+    const outputDeps: OutputBuilderDeps<HTMLCanvasElement> = {
+      renderPage: (page, scale) => renderer.renderOutput(sources, page, scale),
+      encode: canvasToBlob,
+      reportProgress: (label, percent) => setProgress({ label, percent }),
+      yieldControl: yieldToBrowser,
+    };
+
     try {
       if (activeTool === "split") {
         const selected = pages.filter((page) => selectedIds.has(page.id));
@@ -600,7 +388,7 @@ export default function Home() {
           );
         }
       } else if (activeTool === "compress") {
-        const bytes = await makeCompressedPdf();
+        const bytes = await buildCompressedPdf(pages, compressionLevel, outputDeps);
         await verifyPdfPageCount(bytes, pages.length);
         const difference = totalInputSize - bytes.length;
         const note =
@@ -615,7 +403,7 @@ export default function Home() {
           pages.length,
         );
       } else if (activeTool === "convert" && hasPdf) {
-        const { blob, entryCount } = await makeImageArchive();
+        const { blob, entryCount } = await buildImageArchive(pages, convertFormat, outputDeps);
         await verifyArchiveEntryCount(blob, entryCount);
         setDownloadResult(
           blob,
@@ -796,11 +584,11 @@ export default function Home() {
                 <>
                   <fieldset className="option-group">
                     <legend>ระดับการบีบอัด</legend>
-                    {(Object.keys(compressionSettings) as CompressionLevel[]).map((level) => (
+                    {(Object.keys(COMPRESSION_SETTINGS) as CompressionLevel[]).map((level) => (
                       <label
                         key={level}
                         htmlFor={`compression-${level}`}
-                        aria-label={`เลือกระดับ ${compressionSettings[level].label}`}
+                        aria-label={`เลือกระดับ ${COMPRESSION_SETTINGS[level].label}`}
                         className={compressionLevel === level ? "selected" : ""}
                       >
                         <input
@@ -810,7 +598,7 @@ export default function Home() {
                           checked={compressionLevel === level}
                           onChange={() => setCompressionLevel(level)}
                         />
-                        <span><strong>{compressionSettings[level].label}</strong><small>{level === "small" ? "เหมาะกับการส่งแบบฟอร์ม" : level === "balanced" ? "แนะนำสำหรับงานทั่วไป" : "เหมาะกับเอกสารภาพ"}</small></span>
+                        <span><strong>{COMPRESSION_SETTINGS[level].label}</strong><small>{level === "small" ? "เหมาะกับการส่งแบบฟอร์ม" : level === "balanced" ? "แนะนำสำหรับงานทั่วไป" : "เหมาะกับเอกสารภาพ"}</small></span>
                       </label>
                     ))}
                   </fieldset>
@@ -820,9 +608,9 @@ export default function Home() {
               {activeTool === "convert" && hasPdf && (
                 <fieldset className="option-group inline-options">
                   <legend>รูปแบบภาพ</legend>
-                  {(["jpg", "png"] as ConvertFormat[]).map((format) => (
+                  {(["jpg", "png"] as ImageFormat[]).map((format) => (
                     <label key={format} htmlFor={`convert-${format}`} className={convertFormat === format ? "selected" : ""}>
-                      <input id={`convert-${format}`} type="radio" name="convert" checked={convertFormat === format} onChange={() => setConvertFormat(format)} />
+                      <input id={`convert-${format}`} type="radio" name="convert" checked={convertFormat === format} onChange={() => setImageFormat(format)} />
                       <strong>{format.toUpperCase()}</strong>
                     </label>
                   ))}
