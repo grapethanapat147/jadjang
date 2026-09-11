@@ -390,6 +390,28 @@ img { max-width: 100%; }
   .auto-clear-note { grid-column: 1 / -1; text-align: center; }
 }
 
+/* Touch targets. Fingers are less precise than a cursor, so every control a
+   user taps to manipulate pages gets at least 44px in both directions. This
+   keys off the pointer rather than the viewport width, because a wide tablet
+   needs the same hit areas a phone does, and it sits after the width queries
+   so it wins over the sizes they set. */
+@media (pointer: coarse) {
+  .brand { min-height: 44px; }
+  .add-file-button, .clear-button { min-height: 44px; }
+
+  /* Two rows of two instead of four in a row: on a narrow page card, four
+     columns leave each button about 30px wide, and delete sits next to the
+     move-right arrow. */
+  .page-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .page-controls button { min-height: 44px; font-size: 16px; }
+
+  .page-card-top { min-height: 44px; }
+  .page-card-top label { min-height: 44px; padding-right: 4px; }
+  .page-card-top input { width: 20px; height: 20px; }
+
+  .selection-summary button { min-height: 44px; padding: 0 16px; font-size: 13px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
 }
