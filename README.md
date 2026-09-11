@@ -68,6 +68,3 @@ npx wrangler dev --config dist/server/wrangler.json
 
 `--dry-run` รายงานขนาดที่จะอัปโหลดโดยไม่ส่งจริงและไม่ต้อง Login ส่วน `wrangler dev` รัน Artifact ตัวเดียวกับที่จะ Deploy
 
-`.openai/hosting.json` เหลือไว้จากตอน Deploy ผ่าน OpenAI Sites ตอนนี้ไม่มีผลกับ Build แล้ว
-เก็บไว้เผื่อต้องกลับไปจัดการ Site เดิม และลบได้เมื่อไม่ต้องใช้
-

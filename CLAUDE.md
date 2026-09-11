@@ -31,8 +31,6 @@ Supported MVP workflows are page organization, PDF merging, page splitting, comp
   `@cloudflare/vite-plugin` generates at `dist/server/wrangler.json`; do not hand-write a wrangler config
   beside it. No D1, R2 or KV binding is needed, and the Images binding is optional - `/_vinext/image`
   answers 501 without it, which is fine while the site uses plain `<img>` assets.
-- `.openai/hosting.json` is a leftover from the previous OpenAI Sites deployment. Nothing reads it any
-  more and it holds no secret.
 
 Avoid replacing the existing architecture or package manager unless the change is clearly necessary. Prefer small, testable increments.
 
