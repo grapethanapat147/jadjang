@@ -9,8 +9,10 @@ import {
   fillPageBox,
   findOrphanedSourceIds,
   fitImageOnA4,
+  hasEveryPage,
   mimeTypeForSource,
   movePage,
+  splitEntryName,
   splitPdfPages,
   validateInputFiles,
   verifyPdfPageCount,
@@ -28,6 +30,7 @@ function pngSource() {
     type: "png",
     bytes: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
     size: buffer.byteLength,
+    pageCount: 1,
   };
 }
 
@@ -57,8 +60,8 @@ test("merges and verifies the requested page order", async () => {
   const first = await samplePdf(2);
   const second = await samplePdf(1);
   const sources = [
-    { id: "one", name: "one.pdf", type: "pdf", bytes: first, size: first.byteLength },
-    { id: "two", name: "two.pdf", type: "pdf", bytes: second, size: second.byteLength },
+    { id: "one", name: "one.pdf", type: "pdf", bytes: first, size: first.byteLength, pageCount: 2 },
+    { id: "two", name: "two.pdf", type: "pdf", bytes: second, size: second.byteLength, pageCount: 1 },
   ];
   const pages = [
     { id: "p3", sourceId: "two", pageNumber: 1, rotation: 0 },
@@ -73,12 +76,15 @@ test("merges and verifies the requested page order", async () => {
 
 test("splits selected pages into one-page PDFs", async () => {
   const bytes = await samplePdf(2);
-  const source = { id: "source", name: "source.pdf", type: "pdf", bytes, size: bytes.byteLength };
+  const source = { id: "source", name: "source.pdf", type: "pdf", bytes, size: bytes.byteLength, pageCount: 2 };
   const pages = [
     { id: "p1", sourceId: "source", pageNumber: 1, rotation: 0 },
     { id: "p2", sourceId: "source", pageNumber: 2, rotation: 0 },
   ];
-  const results = await splitPdfPages([source], pages);
+  const results = await splitPdfPages(
+    [source],
+    pages.map((page, index) => ({ page, position: index + 1 })),
+  );
   assert.equal(results.length, 2);
   for (const result of results) {
     assert.equal((await PDFDocument.load(result.bytes)).getPageCount(), 1);
@@ -178,4 +184,46 @@ test("blocks a result whose page count is short", async () => {
 test("blocks a split file that is not a single page", async () => {
   const bytes = new Uint8Array(await samplePdf(2));
   await assert.rejects(() => verifyPdfPageCount(bytes, 1), /หยุดดาวน์โหลด/);
+});
+
+test("names split files after the page numbers the user saw", async () => {
+  const bytes = await samplePdf(3);
+  const source = { id: "source", name: "source.pdf", type: "pdf", bytes, size: bytes.byteLength, pageCount: 3 };
+  const pages = [1, 2, 3].map((pageNumber) => ({
+    id: `p${pageNumber}`,
+    sourceId: "source",
+    pageNumber,
+    rotation: 0,
+  }));
+
+  // Picking pages 1 and 3 must not produce page-01 and page-02.
+  const results = await splitPdfPages(source ? [source] : [], [
+    { page: pages[0], position: 1 },
+    { page: pages[2], position: 3 },
+  ]);
+  assert.deepEqual(results.map((result) => result.name), ["page-01.pdf", "page-03.pdf"]);
+});
+
+test("pads split file names so they stay sortable", () => {
+  assert.equal(splitEntryName(1, 9), "page-01.pdf");
+  assert.equal(splitEntryName(7, 99), "page-07.pdf");
+  assert.equal(splitEntryName(7, 100), "page-007.pdf");
+  assert.equal(splitEntryName(250, 250), "page-250.pdf");
+});
+
+test("knows when the workspace still holds every page that was read", () => {
+  const sources = [
+    { id: "doc", pageCount: 3 },
+    { id: "photo", pageCount: 1 },
+  ];
+  const allPages = [
+    { sourceId: "doc" },
+    { sourceId: "doc" },
+    { sourceId: "doc" },
+    { sourceId: "photo" },
+  ];
+
+  assert.equal(hasEveryPage(sources, allPages), true);
+  assert.equal(hasEveryPage(sources, allPages.slice(1)), false, "a deleted page breaks the comparison");
+  assert.equal(hasEveryPage([], []), true);
 });

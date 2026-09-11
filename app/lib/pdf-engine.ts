@@ -15,6 +15,14 @@ export type SourceRecord = {
   type: "pdf" | "jpg" | "png";
   bytes: ArrayBuffer;
   size: number;
+  /** Pages this file contributed when it was read. Images contribute one. */
+  pageCount: number;
+};
+
+export type SplitSelection = {
+  page: PageRecord;
+  /** 1-based position in the workspace, so file names match what the user saw. */
+  position: number;
 };
 
 export type PageRecord = {
@@ -67,6 +75,29 @@ export function findOrphanedSourceIds(
 ): string[] {
   const stillUsed = new Set(pages.map((page) => page.sourceId));
   return sourceIds.filter((id) => !stillUsed.has(id));
+}
+
+/**
+ * Whether the workspace still holds every page of every file it read.
+ *
+ * Once pages have been deleted, comparing an output against the original file
+ * sizes measures the deletion as much as the compression.
+ */
+export function hasEveryPage(
+  sources: Array<Pick<SourceRecord, "id" | "pageCount">>,
+  pages: Array<Pick<PageRecord, "sourceId">>,
+): boolean {
+  const present = new Map<string, number>();
+  for (const page of pages) {
+    present.set(page.sourceId, (present.get(page.sourceId) ?? 0) + 1);
+  }
+  return sources.every((source) => (present.get(source.id) ?? 0) === source.pageCount);
+}
+
+/** Zero-padded so the archive sorts correctly however many pages it holds. */
+export function splitEntryName(position: number, highestPosition: number): string {
+  const width = Math.max(2, String(Math.max(1, highestPosition)).length);
+  return `page-${String(position).padStart(width, "0")}.pdf`;
 }
 
 export async function verifyPdfPageCount(bytes: Uint8Array, expectedPages: number): Promise<void> {
@@ -201,11 +232,12 @@ export async function buildPdf(sources: SourceRecord[], pages: PageRecord[]) {
   return output.save({ useObjectStreams: true, addDefaultPage: false });
 }
 
-export async function splitPdfPages(sources: SourceRecord[], pages: PageRecord[]) {
+export async function splitPdfPages(sources: SourceRecord[], selection: SplitSelection[]) {
+  const highestPosition = selection.reduce((highest, entry) => Math.max(highest, entry.position), 0);
   const results: Array<{ name: string; bytes: Uint8Array }> = [];
-  for (let index = 0; index < pages.length; index += 1) {
-    const bytes = await buildPdf(sources, [pages[index]]);
-    results.push({ name: `page-${String(index + 1).padStart(2, "0")}.pdf`, bytes });
+  for (const entry of selection) {
+    const bytes = await buildPdf(sources, [entry.page]);
+    results.push({ name: splitEntryName(entry.position, highestPosition), bytes });
   }
   return results;
 }

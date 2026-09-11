@@ -166,6 +166,8 @@ img { max-width: 100%; }
 .error-notice { border: 1px solid #e4b9b4; background: #fff0ef; color: #8f3029; }
 .warning-notice { border: 1px solid #e7d2a4; background: #fff8e6; color: #755209; }
 
+.workspace-section[data-dragging="true"] { outline: 2px dashed var(--accent); outline-offset: 8px; }
+
 .workspace-section {
   --accent: #4263eb;
   --accent-dark: #324fc4;
@@ -270,7 +272,9 @@ img { max-width: 100%; }
 .paper-preview { width: 100%; aspect-ratio: 1 / 1.36; border: 1px solid #d0d5d2; border-radius: 3px; background: white; display: grid; place-items: center; overflow: hidden; box-shadow: 0 10px 25px rgba(35,46,42,.12); }
 .paper-preview img { width: 100%; height: 100%; object-fit: contain; transition: transform .2s ease; }
 .main-preview > p { width: 100%; margin: 15px 0 0; color: #5f6c72; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
-.preview-placeholder { color: #a0aaaa; text-align: center; }
+.preview-placeholder { border: 0; background: transparent; padding: 0; color: #a0aaaa; font: inherit; text-align: center; }
+.preview-placeholder:not(:disabled) { cursor: pointer; }
+.preview-placeholder:not(:disabled):hover { color: var(--accent); }
 .preview-placeholder span { font-size: 54px; font-weight: 700; }
 .preview-placeholder p { font-size: 12px; }
 .page-grid { align-content: start; padding: 16px; display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr)); gap: 10px; max-height: 594px; overflow: auto; background: #fbfbf8; }

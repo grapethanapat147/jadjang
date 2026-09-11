@@ -7,6 +7,7 @@ import {
   MAX_PNG_PAGES,
   buildCompressedPdf,
   buildImageArchive,
+  compressionNote,
   imageEntryName,
 } from "../app/lib/output-builder.ts";
 import { verifyArchiveEntryCount } from "../app/lib/verify-output.ts";
@@ -199,4 +200,54 @@ test("renders and encodes at the chosen compression level", async () => {
 test("never emits a compressed document with no pages", async () => {
   const stub = stubDeps();
   await assert.rejects(() => buildCompressedPdf([], "balanced", stub.deps), /อย่างน้อย 1 หน้า/);
+});
+
+// ------------------------------------------------------- compression note --
+
+test("reports the saving when the whole upload was compressed", () => {
+  const note = compressionNote({
+    inputBytes: 10 * 1024 * 1024,
+    outputBytes: 2 * 1024 * 1024,
+    pageCount: 12,
+    comparableToInput: true,
+  });
+  assert.match(note, /ลดลง 80%/);
+  assert.match(note, /10\.0 MB/, "says what it is comparing against");
+  assert.match(note, /ตรวจครบ 12 หน้า/);
+});
+
+test("claims no saving once pages have been deleted", () => {
+  // The old note divided by the size of every uploaded file, so deleting pages
+  // inflated the percentage with bytes the compression never touched.
+  const note = compressionNote({
+    inputBytes: 10 * 1024 * 1024,
+    outputBytes: 2 * 1024 * 1024,
+    pageCount: 3,
+    comparableToInput: false,
+  });
+  assert.doesNotMatch(note, /%/, "no percentage when the comparison is invalid");
+  assert.match(note, /ลบหน้าออก/);
+  assert.match(note, /ตรวจครบ 3 หน้า/);
+});
+
+test("says so plainly when the file did not get smaller", () => {
+  const note = compressionNote({
+    inputBytes: 1000,
+    outputBytes: 1200,
+    pageCount: 1,
+    comparableToInput: true,
+  });
+  assert.match(note, /ไม่เล็กลง/);
+  assert.doesNotMatch(note, /ลดลง/);
+});
+
+test("never rounds a real saving down to nothing, and never divides by zero", () => {
+  assert.match(
+    compressionNote({ inputBytes: 100000, outputBytes: 99999, pageCount: 1, comparableToInput: true }),
+    /ลดลง 1%/,
+  );
+  assert.doesNotMatch(
+    compressionNote({ inputBytes: 0, outputBytes: 0, pageCount: 1, comparableToInput: true }),
+    /%|NaN|Infinity/,
+  );
 });

@@ -15,6 +15,7 @@ import {
   buildPdf,
   findOrphanedSourceIds,
   formatBytes,
+  hasEveryPage,
   mimeTypeForSource,
   movePage,
   splitPdfPages,
@@ -35,17 +36,20 @@ import {
   COMPRESSION_SETTINGS,
   buildCompressedPdf,
   buildImageArchive,
+  compressionNote,
   type CompressionLevel,
   type OutputBuilderDeps,
 } from "./lib/output-builder";
 import { nextToolIndex } from "./lib/tool-navigation";
 import { canvasToBlob, createPageRenderer } from "./lib/page-renderer";
+import { isLeavingDropTarget } from "./lib/drag-and-drop";
 
 type ToolId = "organize" | "merge" | "split" | "compress" | "convert";
 
 type WorkspacePage = PageRecord & {
   fileName: string;
   previewUrl?: string;
+  previewFailed?: boolean;
 };
 
 type ResultFile = {
@@ -145,23 +149,26 @@ export default function Home() {
     };
   }, [autoClear, renderer]);
 
-  useEffect(() => {
-    if (!currentPage || currentPage.previewUrl) return;
-    const source = sources.find((item) => item.id === currentPage.sourceId);
+  function updatePreviewState(pageId: string, update: Partial<WorkspacePage>) {
+    setPages((items) => items.map((item) => (item.id === pageId ? { ...item, ...update } : item)));
+  }
+
+  function requestPreview(page: WorkspacePage) {
+    const source = sources.find((item) => item.id === page.sourceId);
     if (!source) return;
-    let cancelled = false;
-    renderer.createPreview(source, currentPage)
-      .then((url) => {
-        if (!cancelled) {
-          setPages((items) =>
-            items.map((item) => (item.id === currentPage.id ? { ...item, previewUrl: url } : item)),
-          );
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
+
+    renderer
+      .createPreview(source, page)
+      .then((url) => updatePreviewState(page.id, { previewUrl: url, previewFailed: false }))
+      // Recorded on the page itself so the user can retry, rather than leaving
+      // a placeholder that looks like it is still working.
+      .catch(() => updatePreviewState(page.id, { previewFailed: true }));
+  }
+
+  useEffect(() => {
+    // A failed preview waits for the user to retry instead of looping.
+    if (!currentPage || currentPage.previewUrl || currentPage.previewFailed) return;
+    requestPreview(currentPage);
     // Rendering is intentionally keyed to the active page only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPageId]);
@@ -198,11 +205,12 @@ export default function Home() {
         const id = crypto.randomUUID();
         const type = sourceType(file);
         const bytes = await file.arrayBuffer();
-        const source: SourceRecord = { id, name: file.name, size: file.size, type, bytes };
+        const source: SourceRecord = { id, name: file.name, size: file.size, type, bytes, pageCount: 1 };
         newSources.push(source);
 
         if (type === "pdf") {
           const document = await renderer.loadDocument(source);
+          source.pageCount = document.numPages;
           if (discoveredPages + document.numPages > MAX_PAGES) {
             throw new Error(`รองรับได้สูงสุด ${MAX_PAGES} หน้าต่อครั้ง กรุณาแบ่งไฟล์เป็นชุดเล็กลง`);
           }
@@ -273,6 +281,17 @@ export default function Home() {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
     if (files.length) void addFiles(files);
+  }
+
+  function handleDragEnter(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    if (!isBusy) setIsDragging(true);
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLElement>) {
+    if (isLeavingDropTarget(event.currentTarget, event.relatedTarget as Node | null)) {
+      setIsDragging(false);
+    }
   }
 
   function handleDrop(event: DragEvent<HTMLElement>) {
@@ -352,20 +371,22 @@ export default function Home() {
 
     try {
       if (activeTool === "split") {
-        const selected = pages.filter((page) => selectedIds.has(page.id));
-        if (!selected.length) throw new Error("กรุณาเลือกหน้าที่ต้องการแยกอย่างน้อย 1 หน้า");
-        if (selected.length === 1) {
-          const bytes = await buildPdf(sources, selected);
+        const selection = pages
+          .map((page, index) => ({ page, position: index + 1 }))
+          .filter((entry) => selectedIds.has(entry.page.id));
+        if (!selection.length) throw new Error("กรุณาเลือกหน้าที่ต้องการแยกอย่างน้อย 1 หน้า");
+        if (selection.length === 1) {
+          const bytes = await buildPdf(sources, [selection[0].page]);
           await verifyPdfPageCount(bytes, 1);
           setDownloadResult(
             new Blob([bytes as BlobPart], { type: "application/pdf" }),
             "จัดแจง-หน้าที่เลือก.pdf",
             "pdf",
-            "ตรวจสอบแล้ว: ผลลัพธ์มี 1 หน้าตามที่เลือก",
+            `ตรวจสอบแล้ว: ผลลัพธ์มีหน้า ${selection[0].position} เพียงหน้าเดียวตามที่เลือก`,
             1,
           );
         } else {
-          const files = await splitPdfPages(sources, selected);
+          const files = await splitPdfPages(sources, selection);
           for (let index = 0; index < files.length; index += 1) {
             setProgress({
               label: `กำลังตรวจไฟล์ที่ ${index + 1} จาก ${files.length}`,
@@ -390,16 +411,16 @@ export default function Home() {
       } else if (activeTool === "compress") {
         const bytes = await buildCompressedPdf(pages, compressionLevel, outputDeps);
         await verifyPdfPageCount(bytes, pages.length);
-        const difference = totalInputSize - bytes.length;
-        const note =
-          difference > 0
-            ? `ลดลง ${Math.max(1, Math.round((difference / totalInputSize) * 100))}% และตรวจครบ ${pages.length} หน้า`
-            : `ไฟล์ใหม่ไม่เล็กลง แต่ตรวจครบ ${pages.length} หน้า — ลองระดับ “ไฟล์เล็ก” เพื่อผลที่ดีกว่า`;
         setDownloadResult(
           new Blob([bytes as BlobPart], { type: "application/pdf" }),
           "จัดแจง-บีบอัด.pdf",
           "pdf",
-          note,
+          compressionNote({
+            inputBytes: totalInputSize,
+            outputBytes: bytes.length,
+            pageCount: pages.length,
+            comparableToInput: hasEveryPage(sources, pages),
+          }),
           pages.length,
         );
       } else if (activeTool === "convert" && hasPdf) {
@@ -540,7 +561,19 @@ export default function Home() {
         </section>
       )}
 
-      <section className="workspace-section" id="quick-preview" role="tabpanel" ref={workspaceRef} data-active-tool={activeTool} aria-labelledby="workspace-title">
+      <section
+        className="workspace-section"
+        id="quick-preview"
+        role="tabpanel"
+        ref={workspaceRef}
+        data-active-tool={activeTool}
+        data-dragging={isDragging ? "true" : undefined}
+        aria-labelledby="workspace-title"
+        onDragEnter={handleDragEnter}
+        onDragOver={(event) => event.preventDefault()}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
         <div className="workspace-heading">
           <div className="active-tool-heading">
             <span className="active-tool-icon" key={activeTool}>
@@ -569,7 +602,7 @@ export default function Home() {
               <p className="flow-privacy"><span className="status-dot" />ทำงานบนอุปกรณ์ของคุณ</p>
             </div>
             <div className="upload-card">
-              <label className={`drop-zone ${isDragging ? "dragging" : ""}`} htmlFor="pdf-upload" onDragEnter={(event) => { event.preventDefault(); setIsDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={() => setIsDragging(false)} onDrop={handleDrop}>
+              <label className={`drop-zone ${isDragging ? "dragging" : ""}`} htmlFor="pdf-upload">
                 <span className="upload-symbol">＋</span><strong>วาง PDF หรือรูปที่นี่</strong><span>รองรับ PDF, JPG และ PNG · สูงสุด 150 MB ต่อครั้ง</span><span className="primary-button">เลือกไฟล์</span>
                 <input id="pdf-upload" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png" multiple onChange={handleInput} disabled={isBusy} />
               </label>
@@ -659,7 +692,23 @@ export default function Home() {
                         style={{ transform: `rotate(${currentPage.rotation}deg)` }}
                       />
                     ) : (
-                      <div className="preview-placeholder"><span>{currentPage?.pageNumber ?? "–"}</span><p>แตะหน้านี้เพื่อสร้าง Preview</p></div>
+                      <button
+                        type="button"
+                        className="preview-placeholder"
+                        onClick={() => {
+                          if (!currentPage) return;
+                          updatePreviewState(currentPage.id, { previewFailed: false });
+                          requestPreview(currentPage);
+                        }}
+                        disabled={!currentPage || !currentPage.previewFailed}
+                      >
+                        <span>{currentPage?.pageNumber ?? "–"}</span>
+                        <p>
+                          {currentPage?.previewFailed
+                            ? "สร้าง Preview ไม่สำเร็จ · แตะเพื่อลองใหม่"
+                            : "กำลังสร้าง Preview…"}
+                        </p>
+                      </button>
                     )}
                   </div>
                   <p>{currentPage?.fileName} · หน้าต้นฉบับ {currentPage?.pageNumber}</p>

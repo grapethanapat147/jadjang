@@ -1,4 +1,4 @@
-import type { PageBox, PageRecord } from "./pdf-engine.ts";
+import { formatBytes, type PageBox, type PageRecord } from "./pdf-engine.ts";
 import { isImageOfFormat, type ImageFormat } from "./verify-output.ts";
 
 export type RenderedPage<TCanvas> = {
@@ -131,4 +131,34 @@ export async function buildImageArchive<TCanvas>(
   );
 
   return { blob, entryCount: pages.length };
+}
+
+/**
+ * Honest wording for a compressed result.
+ *
+ * A percentage is only claimed when the workspace still holds every page that
+ * was read, because otherwise the saving being reported is partly the pages the
+ * user deleted rather than the compression.
+ */
+export function compressionNote(options: {
+  inputBytes: number;
+  outputBytes: number;
+  pageCount: number;
+  comparableToInput: boolean;
+}): string {
+  const { inputBytes, outputBytes, pageCount, comparableToInput } = options;
+  const checked = `ตรวจครบ ${pageCount} หน้า`;
+
+  if (!comparableToInput) {
+    return `${checked} — มีการลบหน้าออก จึงไม่เทียบขนาดกับไฟล์ต้นฉบับ`;
+  }
+  if (inputBytes <= 0) {
+    return checked;
+  }
+  if (outputBytes >= inputBytes) {
+    return `ไฟล์ใหม่ไม่เล็กลง แต่${checked} — ลองระดับ “ไฟล์เล็ก” เพื่อผลที่ดีกว่า`;
+  }
+
+  const saved = Math.max(1, Math.round(((inputBytes - outputBytes) / inputBytes) * 100));
+  return `ลดลง ${saved}% จาก ${formatBytes(inputBytes)} และ${checked}`;
 }
