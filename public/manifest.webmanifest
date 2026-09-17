@@ -1,0 +1,17 @@
+{
+  "name": "จัดแจง — จัดเอกสารให้พร้อมส่ง",
+  "short_name": "จัดแจง",
+  "description": "รวม แยก บีบอัด แปลง และจัดหน้า PDF บนอุปกรณ์ของคุณอย่างเป็นส่วนตัว",
+  "lang": "th",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f7f7fb",
+  "theme_color": "#4263eb",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

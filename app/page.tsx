@@ -149,6 +149,12 @@ export default function Home() {
     };
   }, [autoClear, renderer]);
 
+  useEffect(() => {
+    // Dev is served unhashed and hot-reloaded, so caching it would fight HMR.
+    if (import.meta.env.DEV || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  }, []);
+
   function updatePreviewState(pageId: string, update: Partial<WorkspacePage>) {
     setPages((items) => items.map((item) => (item.id === pageId ? { ...item, ...update } : item)));
   }

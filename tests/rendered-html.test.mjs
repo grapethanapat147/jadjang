@@ -87,3 +87,20 @@ test("exposes a single tab stop so arrow keys own the tablist", async () => {
   assert.equal(skipped.length, 4, "the rest are reached with arrow keys");
   assert.match(html, /id="tool-tab-organize"[^>]*aria-selected="true"/);
 });
+
+test("advertises itself as an installable app, from inside <head>", async () => {
+  const html = await (await render()).text();
+  const head = html.slice(html.indexOf("<head"), html.indexOf("</head>"));
+
+  // Position matters: a browser looks in <head> when deciding installability,
+  // and the framework emits metadata late in the body where it would be missed.
+  assert.match(head, /<link rel="manifest" href="\/manifest\.webmanifest"\s*\/?>/);
+  assert.match(head, /<meta name="theme-color" content="#4263eb"\s*\/?>/);
+  assert.match(head, /<link rel="apple-touch-icon" href="\/apple-touch-icon\.png"\s*\/?>/);
+  // iOS uses these for the home-screen launch rather than the manifest.
+  assert.match(head, /<meta name="apple-mobile-web-app-capable" content="yes"\s*\/?>/);
+  assert.match(head, /<meta name="apple-mobile-web-app-title" content="จัดแจง"\s*\/?>/);
+
+  const manifestLinks = html.match(/rel="manifest"/g) ?? [];
+  assert.equal(manifestLinks.length, 1, "exactly one manifest link");
+});

@@ -18,6 +18,7 @@ export async function generateMetadata(): Promise<Metadata> {
     metadataBase: new URL(origin),
     title,
     description,
+    applicationName: "จัดแจง",
     openGraph: {
       title,
       description,
@@ -41,6 +42,17 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="th">
+      <head>
+        {/* Declared here rather than through metadata so they land in <head>,
+            where a browser looks when deciding whether the app is installable. */}
+        <link rel="manifest" href="/manifest.webmanifest" />
+        <meta name="theme-color" content="#4263eb" />
+        <link rel="icon" href="/favicon.svg" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-title" content="จัดแจง" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+      </head>
       <body>{children}</body>
     </html>
   );
