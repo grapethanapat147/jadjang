@@ -12,6 +12,17 @@
   --mint: #dff7eb;
   --green: #148259;
   --red: #b73f35;
+
+  /* Focus. #202533 is the only value clearing 3:1 against every surface in the
+     app — including the brand-blue button, where the brand colour itself scores
+     1.0:1 and disappears. */
+  --focus-color: #202533;
+  --focus-width: 3px;
+  --focus-offset: 2px;
+
+  /* Secondary text, both cleared 4.5:1 on white and on --paper. */
+  --text-secondary: #5d6879;
+  --text-subtle: #657081;
 }
 
 * { box-sizing: border-box; }
@@ -146,7 +157,38 @@ img { max-width: 100%; }
 .tool-card::after { content: ""; position: absolute; inset: auto -35px -45px auto; width: 120px; height: 120px; border-radius: 50%; background: var(--tool-soft); transition: transform .2s ease; }
 .tool-card:hover { transform: translateY(-4px); border-color: var(--tool-color); box-shadow: 0 16px 38px rgba(34,43,56,.10); }
 .tool-card:hover::after { transform: scale(1.14); }
-.tool-card:focus-visible { outline: 3px solid var(--tool-border); outline-offset: 3px; }
+/* One focus treatment for every control. outline is used rather than a
+   pseudo-element because .tool-card already spends both ::before and ::after,
+   and a modern outline follows border-radius on its own. */
+.brand:focus-visible,
+.tool-card:focus-visible,
+.process-button:focus-visible,
+.thumb-frame:focus-visible,
+.page-controls button:focus-visible,
+.clear-button:focus-visible,
+.delete-now:focus-visible,
+.download-button:focus-visible,
+.preview-placeholder:focus-visible,
+.notice button:focus-visible,
+.selection-summary button:focus-visible,
+.page-card-top input:focus-visible,
+.option-group input:focus-visible {
+  outline: var(--focus-width) solid var(--focus-color);
+  outline-offset: var(--focus-offset);
+}
+
+/* These two are labels wrapping a visually hidden file input, so the focus
+   lands on the input and the ring has to be drawn by the label. */
+.add-file-button:focus-within,
+.drop-zone:focus-within {
+  outline: var(--focus-width) solid var(--focus-color);
+  outline-offset: var(--focus-offset);
+}
+
+/* A focused control draws its ring over its neighbours rather than under them,
+   which matters where the page controls sit 4px apart. */
+.page-controls button:focus-visible,
+.thumb-frame:focus-visible { position: relative; z-index: 1; }
 .tool-card.active { border-color: var(--tool-color); background: linear-gradient(180deg, var(--tool-soft), #fff 56%); box-shadow: 0 16px 40px rgba(34,43,56,.12), inset 0 0 0 1px var(--tool-color); }
 .tool-icon-wrap { width: 120px; height: 120px; margin: -3px 0 7px -3px; display: grid; place-items: center; }
 .tool-icon-wrap img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 10px 13px rgba(32,38,52,.10)); transition: transform .3s cubic-bezier(.2,.8,.2,1), filter .3s ease; }
@@ -271,19 +313,22 @@ img { max-width: 100%; }
 .main-preview { padding: 24px; border-right: 1px solid #d9dfdb; background: #f2f3ef; display: flex; flex-direction: column; align-items: center; }
 .paper-preview { width: 100%; aspect-ratio: 1 / 1.36; border: 1px solid #d0d5d2; border-radius: 3px; background: white; display: grid; place-items: center; overflow: hidden; box-shadow: 0 10px 25px rgba(35,46,42,.12); }
 .paper-preview img { width: 100%; height: 100%; object-fit: contain; transition: transform .2s ease; }
-.main-preview > p { width: 100%; margin: 15px 0 0; color: #5f6c72; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
-.preview-placeholder { border: 0; background: transparent; padding: 0; color: #a0aaaa; font: inherit; text-align: center; }
+.main-preview > p { width: 100%; margin: 15px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+/* Was #a0aaaa: 2.38:1, well under the 4.5:1 floor. */
+.preview-placeholder { border: 0; background: transparent; padding: 0; color: var(--text-subtle); font: inherit; text-align: center; }
 .preview-placeholder:not(:disabled) { cursor: pointer; }
 .preview-placeholder:not(:disabled):hover { color: var(--accent); }
 .preview-placeholder span { font-size: 54px; font-weight: 700; }
-.preview-placeholder p { font-size: 12px; }
+.preview-placeholder p { font-size: 14px; line-height: 1.5; }
 .page-grid { align-content: start; padding: 16px; display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr)); gap: 10px; max-height: 594px; overflow: auto; background: #fbfbf8; }
 .page-card { min-width: 0; padding: 8px; border: 1px solid #d7dcda; border-radius: 9px; background: white; transition: .15s ease; }
 .page-card:hover { border-color: #9cacaa; transform: translateY(-1px); }
 .page-card.current { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .page-card-top { min-height: 31px; display: flex; align-items: center; justify-content: space-between; gap: 5px; }
-.page-card-top > span, .page-card-top label { color: #4f5c63; font-size: 11px; font-weight: 700; }
-.page-card-top small { min-width: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #737e83; font-size: 9px; }
+.page-card-top > span, .page-card-top label { color: #4f5c63; font-size: 14px; font-weight: 700; line-height: 1.5; }
+/* Was #737e83 at 9px: 4.17:1, and too small for Thai, whose upper and lower
+   vowels and tone marks need more height than Latin at the same size. */
+.page-card-top small { min-width: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 14px; line-height: 1.5; }
 .page-card-top label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
 .page-card-top input { width: 15px; height: 15px; accent-color: var(--accent); }
 .thumb-frame { width: 100%; padding: 0; aspect-ratio: 1 / 1.35; border: 1px solid #e0e3e1; background: #f4f5f2; display: grid; place-items: center; overflow: hidden; cursor: pointer; }
