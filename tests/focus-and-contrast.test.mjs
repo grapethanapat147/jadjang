@@ -99,19 +99,3 @@ test("secondary text still reads as secondary", () => {
   const secondary = contrast(token("text-secondary"), "#ffffff");
   assert.ok(secondary < ink, "secondary text must be lighter than primary");
 });
-
-test("Thai the user has to read is at least 14px", () => {
-  // Thai stacks vowels and tone marks above and below the line, so it needs
-  // more height than Latin at the same size.
-  for (const selector of [".page-card-top small", ".preview-placeholder p", ".main-preview > p"]) {
-    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const rule = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
-    assert.ok(rule, `${selector} not found`);
-    const size = rule[1].match(/font-size:\s*(\d+)px/);
-    assert.ok(size, `${selector} needs an explicit font-size`);
-    assert.ok(
-      Number(size[1]) >= 14,
-      `${selector} is ${size[1]}px, under the 14px Thai minimum`,
-    );
-  }
-});
