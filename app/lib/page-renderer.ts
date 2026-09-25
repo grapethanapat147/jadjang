@@ -6,6 +6,7 @@ import {
   type SourceRecord,
 } from "./pdf-engine.ts";
 import type { RenderedPage } from "./output-builder.ts";
+import { detailRenderSize } from "./detail-render.ts";
 
 type PdfViewportLike = {
   width: number;
@@ -30,6 +31,9 @@ export type PdfDocumentLike = {
 
 const PREVIEW_SCALE = 0.32;
 const PREVIEW_QUALITY = 0.7;
+
+/** The detail view is looked at closely, so it gives up size for fidelity. */
+const DETAIL_QUALITY = 0.92;
 const IMAGE_OUTPUT_MAX_EDGE = 1_250;
 
 export function canvasToBlob(
@@ -54,6 +58,12 @@ export type PageRenderer = {
     scale: number,
   ): Promise<RenderedPage<HTMLCanvasElement>>;
   createPreview(source: SourceRecord, page: PageRecord): Promise<string>;
+  renderDetail(
+    source: SourceRecord,
+    page: PageRecord,
+    box: { width: number; height: number },
+    devicePixelRatio: number,
+  ): Promise<string>;
   releasePreview(url: string | undefined): void;
   releaseSource(sourceId: string): void;
   releaseAll(): void;
@@ -142,8 +152,23 @@ export function createPageRenderer(options: { pdfWorkerSrc: string }): PageRende
     return { canvas, width: rawWidth, height: rawHeight };
   }
 
+  async function createPreview(source: SourceRecord, page: PageRecord): Promise<string> {
+    if (source.type !== "pdf") {
+      const url = URL.createObjectURL(
+        new Blob([source.bytes], { type: mimeTypeForSource(source.type) }),
+      );
+      previewUrls.add(url);
+      return url;
+    }
+
+    // Data URLs need no revoking, so PDF previews are not tracked.
+    const { canvas } = await renderPdfCanvas(source, { ...page, rotation: 0 }, PREVIEW_SCALE);
+    return canvas.toDataURL("image/jpeg", PREVIEW_QUALITY);
+  }
+
   return {
     loadDocument,
+    createPreview,
 
     /**
      * Always reports a page box in PDF points. The PDF path measures in points
@@ -167,18 +192,33 @@ export function createPageRenderer(options: { pdfWorkerSrc: string }): PageRende
       return { canvas: rendered.canvas, pageBox: fitImageOnA4(rendered.width, rendered.height) };
     },
 
-    async createPreview(source, page) {
+    /**
+     * The overlay's full-size image, rendered for the box it will occupy.
+     *
+     * Images are already served at their own resolution by createPreview, so
+     * only PDF pages need re-rendering.
+     */
+    async renderDetail(source, page, box, devicePixelRatio) {
       if (source.type !== "pdf") {
-        const url = URL.createObjectURL(
-          new Blob([source.bytes], { type: mimeTypeForSource(source.type) }),
-        );
-        previewUrls.add(url);
-        return url;
+        return createPreview(source, page);
       }
 
-      // Data URLs need no revoking, so PDF previews are not tracked.
-      const { canvas } = await renderPdfCanvas(source, { ...page, rotation: 0 }, PREVIEW_SCALE);
-      return canvas.toDataURL("image/jpeg", PREVIEW_QUALITY);
+      const pdfDocument = await loadDocument(source);
+      const pdfPage = await pdfDocument.getPage(page.pageNumber);
+      const base = pdfPage.getViewport({ scale: 1 });
+      const rotation = (((base.rotation ?? 0) + page.rotation) % 360 + 360) % 360;
+      const natural = pdfPage.getViewport({ scale: 1, rotation });
+
+      const size = detailRenderSize({
+        cssWidth: box.width,
+        cssHeight: box.height,
+        pageWidth: natural.width,
+        pageHeight: natural.height,
+        devicePixelRatio,
+      });
+
+      const { canvas } = await renderPdfCanvas(source, page, size.scale);
+      return canvas.toDataURL("image/jpeg", DETAIL_QUALITY);
     },
 
     releasePreview(url) {

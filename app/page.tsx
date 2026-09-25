@@ -41,6 +41,8 @@ import {
   type OutputBuilderDeps,
 } from "./lib/output-builder";
 import { nextToolIndex } from "./lib/tool-navigation";
+import { createDetailRenderQueue } from "./lib/detail-render";
+import { focusableWithin, nextTrapTarget } from "./lib/focus-trap";
 import { canvasToBlob, createPageRenderer } from "./lib/page-renderer";
 import { isLeavingDropTarget } from "./lib/drag-and-drop";
 
@@ -100,6 +102,8 @@ export default function Home() {
   const [pages, setPages] = useState<WorkspacePage[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [currentPageId, setCurrentPageId] = useState<string | null>(null);
+  const [detailPageId, setDetailPageId] = useState<string | null>(null);
+  const [detailRender, setDetailRender] = useState<{ key: string; url: string | null } | null>(null);
   const [activeTool, setActiveTool] = useState<ToolId>("organize");
   const [compressionLevel, setCompressionLevel] = useState<CompressionLevel>("balanced");
   const [convertFormat, setImageFormat] = useState<ImageFormat>("jpg");
@@ -111,10 +115,16 @@ export default function Home() {
   const [isBusy, setIsBusy] = useState(false);
 
   const workspaceRef = useRef<HTMLElement | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const detailStageRef = useRef<HTMLDivElement | null>(null);
+  const detailCloseRef = useRef<HTMLButtonElement | null>(null);
+  /** The thumbnail the overlay was opened from, so focus can go back to it. */
+  const detailOpenerRef = useRef<HTMLElement | null>(null);
   const toolListRef = useRef<HTMLDivElement | null>(null);
   const resultUrl = useRef<string | null>(null);
   const [renderer] = useState(() => createPageRenderer({ pdfWorkerSrc: pdfWorkerUrl }));
   const [autoClear] = useState<AutoClearTimer>(() => createAutoClearTimer());
+  const [detailQueue] = useState(() => createDetailRenderQueue<string>());
 
   const totalInputSize = useMemo(
     () => sources.reduce((sum, source) => sum + source.size, 0),
@@ -123,6 +133,14 @@ export default function Home() {
   const hasPdf = sources.some((source) => source.type === "pdf");
   const onlyImages = sources.length > 0 && sources.every((source) => source.type !== "pdf");
   const currentPage = pages.find((page) => page.id === currentPageId) ?? pages[0];
+  const detailIndex = pages.findIndex((page) => page.id === detailPageId);
+  const detailPage = detailIndex === -1 ? null : pages[detailIndex];
+  /** Rotation is in the key: a rotated page needs rendering again. */
+  const detailKey = detailPage ? `${detailPage.id}:${detailPage.rotation}` : null;
+  const detailIsCurrent = detailRender !== null && detailRender.key === detailKey;
+  const detailImage =
+    (detailIsCurrent ? detailRender.url : null) ?? detailPage?.previewUrl ?? null;
+  const isSharpening = detailPage !== null && !detailIsCurrent;
   const activeToolOption = toolOptions.find((tool) => tool.id === activeTool) ?? toolOptions[0];
 
   async function clearWorkspace() {
@@ -134,6 +152,9 @@ export default function Home() {
     setPages([]);
     setSelectedIds(new Set());
     setCurrentPageId(null);
+    setDetailPageId(null);
+    setDetailRender(null);
+    detailQueue.clear();
     setResult(null);
     setError(null);
     setWarning(null);
@@ -145,9 +166,10 @@ export default function Home() {
     return () => {
       autoClear.cancel();
       renderer.releaseAll();
+      detailQueue.clear();
       if (resultUrl.current) URL.revokeObjectURL(resultUrl.current);
     };
-  }, [autoClear, renderer]);
+  }, [autoClear, renderer, detailQueue]);
 
   useEffect(() => {
     // Dev is served unhashed and hot-reloaded, so caching it would fight HMR.
@@ -178,6 +200,95 @@ export default function Home() {
     // Rendering is intentionally keyed to the active page only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPageId]);
+
+  function openDetail(pageId: string, opener: HTMLElement | null) {
+    detailOpenerRef.current = opener;
+    setDetailPageId(pageId);
+  }
+
+  function closeDetail() {
+    setDetailPageId(null);
+    // Focus belongs back on the thumbnail the overlay was opened from, not at
+    // the top of the document.
+    const opener = detailOpenerRef.current;
+    detailOpenerRef.current = null;
+    opener?.focus();
+  }
+
+  function stepDetail(delta: number) {
+    const next = pages[detailIndex + delta];
+    if (next) setDetailPageId(next.id);
+  }
+
+  function handleDetailKeyDown(event: globalThis.KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeDetail();
+      return;
+    }
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      stepDetail(event.key === "ArrowLeft" ? -1 : 1);
+      return;
+    }
+    if (event.key !== "Tab" || !overlayRef.current) return;
+
+    // Tab must not reach the workspace behind the dialog.
+    const controls = focusableWithin(overlayRef.current);
+    const target = nextTrapTarget(
+      controls,
+      document.activeElement instanceof HTMLElement ? document.activeElement : null,
+      event.shiftKey,
+    );
+    if (!target) return;
+    event.preventDefault();
+    target.focus();
+  }
+
+  useEffect(() => {
+    // Opening a dialog moves focus into it; nothing else in the overlay is a
+    // safe landing point, because the arrows can be disabled at either end.
+    if (detailPageId) detailCloseRef.current?.focus();
+  }, [detailPageId]);
+
+  useEffect(() => {
+    if (!detailPageId) return;
+    document.addEventListener("keydown", handleDetailKeyDown);
+    return () => document.removeEventListener("keydown", handleDetailKeyDown);
+    // Rebound as the position in the document changes, so the arrow keys always
+    // step from the page currently shown.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailPageId, detailIndex, pages.length]);
+
+  useEffect(() => {
+    if (!detailPage || !detailKey) return;
+    const source = sources.find((item) => item.id === detailPage.sourceId);
+    const frame = detailStageRef.current;
+    const box = { width: frame?.clientWidth ?? 0, height: frame?.clientHeight ?? 0 };
+    if (!source || !(box.width > 0) || !(box.height > 0)) return;
+
+    let cancelled = false;
+    detailQueue
+      .request(detailKey, () =>
+        renderer.renderDetail(source, detailPage, box, window.devicePixelRatio || 1),
+      )
+      // A null result means a later page overtook this render, so it is dropped
+      // rather than painted over the page the user is now looking at.
+      .then((url) => {
+        if (!cancelled && url !== null) setDetailRender({ key: detailKey, url });
+      })
+      // Recorded against the key so the overlay stops saying it is working and
+      // keeps the thumbnail it already had.
+      .catch(() => {
+        if (!cancelled) setDetailRender({ key: detailKey, url: null });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // Re-renders when the page or its rotation changes, which is what the key is.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailKey]);
 
   async function addFiles(incoming: File[]) {
     const candidates: UploadCandidate[] = [
@@ -332,6 +443,7 @@ export default function Home() {
       setSources((items) => items.filter((source) => !dropped.has(source.id)));
     }
     setCurrentPageId((value) => (value === id ? remaining[0]?.id ?? null : value));
+    setDetailPageId((value) => (value === id ? null : value));
     setSelectedIds((items) => {
       const next = new Set(items);
       next.delete(id);
@@ -687,79 +799,48 @@ export default function Home() {
                 <div><strong>Preview เอกสาร</strong><span>{pages.length} หน้า · {formatBytes(totalInputSize)}</span></div>
                 <p><span className="status-dot" /> อยู่ในอุปกรณ์</p>
               </div>
-              <div className="preview-layout">
-                <div className="main-preview">
-                  <div className="paper-preview">
-                    {currentPage?.previewUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={currentPage.previewUrl}
-                        alt={`Preview หน้า ${pages.findIndex((page) => page.id === currentPage.id) + 1}`}
-                        style={{ transform: `rotate(${currentPage.rotation}deg)` }}
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        className="preview-placeholder"
-                        onClick={() => {
-                          if (!currentPage) return;
-                          updatePreviewState(currentPage.id, { previewFailed: false });
-                          requestPreview(currentPage);
-                        }}
-                        disabled={!currentPage || !currentPage.previewFailed}
-                      >
-                        <span>{currentPage?.pageNumber ?? "–"}</span>
-                        <p>
-                          {currentPage?.previewFailed
-                            ? "สร้าง Preview ไม่สำเร็จ · แตะเพื่อลองใหม่"
-                            : "กำลังสร้าง Preview…"}
-                        </p>
-                      </button>
-                    )}
-                  </div>
-                  <p>{currentPage?.fileName} · หน้าต้นฉบับ {currentPage?.pageNumber}</p>
-                </div>
-
-                <div className="page-grid" role="list" aria-label="หน้าทั้งหมด">
-                  {pages.map((page, index) => (
-                    <article
-                      key={page.id}
-                      role="listitem"
-                      className={`page-card ${currentPage?.id === page.id ? "current" : ""}`}
+              <div className="page-grid" role="list" aria-label="หน้าทั้งหมด">
+                {pages.map((page, index) => (
+                  <article
+                    key={page.id}
+                    role="listitem"
+                    className={`page-card ${currentPage?.id === page.id ? "current" : ""}`}
+                  >
+                    <div className="page-card-top">
+                      {activeTool === "split" ? (
+                        <label htmlFor={`split-page-${page.id}`}>
+                          <input id={`split-page-${page.id}`} type="checkbox" checked={selectedIds.has(page.id)} onChange={() => toggleSelected(page.id)} />
+                          <span>{selectedIds.has(page.id) ? "เลือกแล้ว" : "เลือก"}</span>
+                        </label>
+                      ) : <span>หน้า {index + 1}</span>}
+                      <small>{page.fileName}</small>
+                    </div>
+                    <button
+                      className="thumb-frame"
+                      type="button"
+                      onClick={(event) => {
+                        setCurrentPageId(page.id);
+                        openDetail(page.id, event.currentTarget);
+                      }}
+                      aria-label={`ดูหน้า ${index + 1} แบบเต็มจอ`}
                     >
-                      <div className="page-card-top">
-                        {activeTool === "split" ? (
-                          <label htmlFor={`split-page-${page.id}`}>
-                            <input id={`split-page-${page.id}`} type="checkbox" checked={selectedIds.has(page.id)} onChange={() => toggleSelected(page.id)} />
-                            <span>{selectedIds.has(page.id) ? "เลือกแล้ว" : "เลือก"}</span>
-                          </label>
-                        ) : <span>หน้า {index + 1}</span>}
-                        <small>{page.fileName}</small>
-                      </div>
-                      <button
-                        className="thumb-frame"
-                        type="button"
-                        onClick={() => setCurrentPageId(page.id)}
-                        aria-label={`แสดง Preview หน้า ${index + 1}`}
-                      >
-                        {page.previewUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={page.previewUrl}
-                            alt=""
-                            style={{ transform: `rotate(${page.rotation}deg)` }}
-                          />
-                        ) : <span>{page.pageNumber}</span>}
-                      </button>
-                      <div className="page-controls">
-                        <button type="button" onClick={() => reorderPage(index, -1)} disabled={index === 0 || isBusy} aria-label={`เลื่อนหน้า ${index + 1} ไปซ้าย`}>←</button>
-                        <button type="button" onClick={() => updatePage(page.id, { rotation: (page.rotation + 90) % 360 })} disabled={isBusy} aria-label={`หมุนหน้า ${index + 1}`}>↻</button>
-                        <button type="button" onClick={() => reorderPage(index, 1)} disabled={index === pages.length - 1 || isBusy} aria-label={`เลื่อนหน้า ${index + 1} ไปขวา`}>→</button>
-                        <button className="delete-page" type="button" onClick={() => removePage(page.id)} disabled={isBusy} aria-label={`ลบหน้า ${index + 1}`}>×</button>
-                      </div>
-                    </article>
-                  ))}
-                </div>
+                      {page.previewUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={page.previewUrl}
+                          alt=""
+                          style={{ transform: `rotate(${page.rotation}deg)` }}
+                        />
+                      ) : <span>{page.pageNumber}</span>}
+                    </button>
+                    <div className="page-controls">
+                      <button type="button" onClick={() => reorderPage(index, -1)} disabled={index === 0 || isBusy} aria-label={`เลื่อนหน้า ${index + 1} ไปซ้าย`}>←</button>
+                      <button type="button" onClick={() => updatePage(page.id, { rotation: (page.rotation + 90) % 360 })} disabled={isBusy} aria-label={`หมุนหน้า ${index + 1}`}>↻</button>
+                      <button type="button" onClick={() => reorderPage(index, 1)} disabled={index === pages.length - 1 || isBusy} aria-label={`เลื่อนหน้า ${index + 1} ไปขวา`}>→</button>
+                      <button className="delete-page" type="button" onClick={() => removePage(page.id)} disabled={isBusy} aria-label={`ลบหน้า ${index + 1}`}>×</button>
+                    </div>
+                  </article>
+                ))}
               </div>
             </div>
           </div>
@@ -792,6 +873,69 @@ export default function Home() {
           </div>
         )}
       </section>
+
+      {detailPage && (
+        <div
+          className="detail-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`หน้า ${detailIndex + 1} จาก ${pages.length}`}
+          ref={overlayRef}
+        >
+          <div className="detail-topbar">
+            <div>
+              <strong>หน้า {detailIndex + 1} จาก {pages.length}</strong>
+              <span>{detailPage.fileName} · หน้าต้นฉบับ {detailPage.pageNumber}</span>
+            </div>
+            <button
+              className="detail-close"
+              type="button"
+              ref={detailCloseRef}
+              onClick={closeDetail}
+            >
+              ปิด <span aria-hidden="true">✕</span>
+            </button>
+          </div>
+
+          <div className="detail-stage">
+            <button
+              className="detail-previous"
+              type="button"
+              onClick={() => stepDetail(-1)}
+              disabled={detailIndex === 0}
+              aria-label="หน้าก่อนหน้า"
+            >
+              <span aria-hidden="true">←</span>
+            </button>
+
+            <div className="detail-frame" ref={detailStageRef}>
+              {detailImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  className="detail-image"
+                  src={detailImage}
+                  alt={`หน้า ${detailIndex + 1}`}
+                />
+              ) : (
+                <p className="detail-empty">ยังไม่มีภาพสำหรับหน้านี้</p>
+              )}
+              {isSharpening && (
+                <p className="detail-status" role="status">กำลังเตรียมภาพคมชัด…</p>
+              )}
+            </div>
+
+            <button
+              className="detail-next"
+              type="button"
+              onClick={() => stepDetail(1)}
+              disabled={detailIndex === pages.length - 1}
+              aria-label="หน้าถัดไป"
+            >
+              <span aria-hidden="true">→</span>
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

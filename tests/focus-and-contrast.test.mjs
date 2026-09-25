@@ -54,7 +54,8 @@ test("every control that can take focus shows the ring", () => {
   for (const selector of [
     ".brand", ".tool-card", ".process-button", ".thumb-frame",
     ".page-controls button", ".clear-button", ".delete-now", ".download-button",
-    ".preview-placeholder", ".notice button", ".selection-summary button",
+    ".notice button", ".selection-summary button",
+    ".detail-close", ".detail-previous", ".detail-next",
     ".page-card-top input", ".option-group input",
   ]) {
     assert.ok(
@@ -98,4 +99,62 @@ test("secondary text still reads as secondary", () => {
   const ink = contrast(token("ink"), "#ffffff");
   const secondary = contrast(token("text-secondary"), "#ffffff");
   assert.ok(secondary < ink, "secondary text must be lighter than primary");
+});
+
+// ------------------------------------------------------- detail overlay --
+
+/** A rule's body, by selector, straight out of the stylesheet. */
+function rule(selector) {
+  const match = css.match(
+    new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`),
+  );
+  assert.ok(match, `${selector} must be defined`);
+  return match[1];
+}
+
+test("the overlay overrides the focus colour for its own dark ground", () => {
+  const body = rule(".detail-overlay");
+
+  const ground = body.match(/background:\s*(#[0-9a-fA-F]{6})/);
+  assert.ok(ground, ".detail-overlay must set an explicit background");
+
+  const ring = body.match(/--focus-color:\s*(#[0-9a-fA-F]{6})/);
+  assert.ok(ring, ".detail-overlay must set its own --focus-color");
+
+  // The page's own ring is why: it all but vanishes on this ground.
+  const pageRing = contrast(token("focus-color"), ground[1]);
+  assert.ok(
+    pageRing < 3,
+    `the page ring already clears 3:1 here (${pageRing.toFixed(2)}:1), so the override is dead code`,
+  );
+
+  const ratio = contrast(ring[1], ground[1]);
+  assert.ok(
+    ratio >= 3,
+    `overlay ring ${ring[1]} scores ${ratio.toFixed(2)}:1 on ${ground[1]}, under the 3:1 minimum`,
+  );
+});
+
+test("overlay text clears AA on the overlay ground", () => {
+  const ground = rule(".detail-overlay").match(/background:\s*(#[0-9a-fA-F]{6})/)[1];
+  const ink = rule(".detail-overlay").match(/color:\s*(#[0-9a-fA-F]{6})/)[1];
+  assert.ok(contrast(ink, ground) >= 4.5, `${ink} on ${ground} is under 4.5:1`);
+
+  // The secondary line and the "preparing" pill sit on the same ground.
+  for (const selector of [".detail-topbar span", ".detail-empty"]) {
+    const colour = rule(selector).match(/color:\s*(#[0-9a-fA-F]{6})/);
+    assert.ok(colour, `${selector} must set an explicit colour`);
+    const ratio = contrast(colour[1], ground);
+    assert.ok(ratio >= 4.5, `${selector} ${colour[1]} scores ${ratio.toFixed(2)}:1, under 4.5:1`);
+  }
+});
+
+test("the overlay's own borders clear the 3:1 non-text minimum", () => {
+  const ground = rule(".detail-overlay").match(/background:\s*(#[0-9a-fA-F]{6})/)[1];
+  for (const selector of [".detail-close", ".detail-previous,\n.detail-next"]) {
+    const border = rule(selector).match(/border:\s*1px solid (#[0-9a-fA-F]{6})/);
+    assert.ok(border, `${selector} must set an explicit border colour`);
+    const ratio = contrast(border[1], ground);
+    assert.ok(ratio >= 3, `${selector} border ${border[1]} scores ${ratio.toFixed(2)}:1, under 3:1`);
+  }
 });

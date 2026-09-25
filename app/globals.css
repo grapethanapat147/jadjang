@@ -200,7 +200,9 @@ img { max-width: 100%; }
 .clear-button:focus-visible,
 .delete-now:focus-visible,
 .download-button:focus-visible,
-.preview-placeholder:focus-visible,
+.detail-close:focus-visible,
+.detail-previous:focus-visible,
+.detail-next:focus-visible,
 .notice button:focus-visible,
 .selection-summary button:focus-visible,
 .page-card-top input:focus-visible,
@@ -300,8 +302,10 @@ img { max-width: 100%; }
 .primary-button { margin-top: var(--space-sm); background: var(--accent); color: white; padding: var(--space-sm) var(--space-xl); border-radius: var(--radius-md); font-size: var(--type-control); font-weight: 700; box-shadow: 0 8px 20px rgba(35,45,70,.18); transition: transform .2s ease, box-shadow .2s ease, background .2s ease; }
 .drop-zone:hover .primary-button { transform: translateY(-2px); background: var(--accent-dark); box-shadow: 0 12px 24px rgba(35,45,70,.22); }
 
-.workspace-grid { display: grid; grid-template-columns: 286px minmax(0, 1fr); align-items: start; border: 1px solid #cbd2d8; border-radius: var(--radius-xl); background: var(--panel); overflow: hidden; }
-.settings-panel { min-height: 660px; padding: var(--space-lg); border-right: 1px solid #d7ddda; background: #f9f8f4; position: sticky; top: 0; }
+/* Two independent panels rather than one split card: the grid gets the room
+   the large preview used to take, and each block ends at its own content. */
+.workspace-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 5fr); align-items: start; gap: var(--space-xl); }
+.settings-panel { min-width: 0; min-height: 0; height: max-content; padding: var(--space-lg); border: 1px solid #d7ddda; border-radius: var(--radius-lg); background: #f9f8f4; position: sticky; top: var(--space-md); }
 .settings-topline { display: flex; justify-content: space-between; color: #6f7980; font-size: var(--type-meta); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
 .settings-topline span:last-child { border-radius: var(--radius-pill); background: var(--mint); color: var(--green); padding: var(--space-2xs) var(--space-xs); }
 .settings-panel > h3 { margin: var(--space-xl) 0 var(--space-lg); color: var(--accent-dark); font-size: var(--type-heading-md); font-weight: 700; letter-spacing: -.03em; }
@@ -335,24 +339,16 @@ img { max-width: 100%; }
 .process-button:disabled { opacity: .55; cursor: wait; }
 .process-button span { font-size: var(--type-action); }
 
-.page-manager { min-width: 0; }
+.page-manager { min-width: 0; border: 1px solid #cbd2d8; border-radius: var(--radius-lg); background: var(--panel); overflow: hidden; }
 .manager-topbar { min-height: 66px; padding: var(--space-md) var(--space-lg); border-bottom: 1px solid #d8ddda; display: flex; justify-content: space-between; align-items: center; }
 .manager-topbar > div { display: grid; gap: var(--space-2xs); }
 .manager-topbar strong { font-size: var(--type-body); font-weight: 700; }
 .manager-topbar div span { color: #69757a; font-size: var(--type-meta); }
 .manager-topbar p { display: flex; align-items: center; gap: var(--space-xs); margin: 0; color: var(--green); font-size: var(--type-meta); font-weight: 700; }
-.preview-layout { min-width: 0; min-height: 594px; display: grid; grid-template-columns: 310px minmax(0, 1fr); }
-.main-preview { padding: var(--space-xl); border-right: 1px solid #d9dfdb; background: #f2f3ef; display: flex; flex-direction: column; align-items: center; }
-.paper-preview { width: 100%; aspect-ratio: 1 / 1.36; border: 1px solid #d0d5d2; border-radius: var(--radius-xs); background: white; display: grid; place-items: center; overflow: hidden; box-shadow: 0 10px 25px rgba(35,46,42,.12); }
-.paper-preview img { width: 100%; height: 100%; object-fit: contain; transition: transform .2s ease; }
-.main-preview > p { width: 100%; margin: var(--space-md) 0 0; color: var(--text-secondary); font-size: var(--type-meta); line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
-/* Was #a0aaaa: 2.38:1, well under the 4.5:1 floor. */
-.preview-placeholder { border: 0; background: transparent; padding: 0; color: var(--text-subtle); font: inherit; text-align: center; }
-.preview-placeholder:not(:disabled) { cursor: pointer; }
-.preview-placeholder:not(:disabled):hover { color: var(--accent); }
-.preview-placeholder span { font-size: var(--type-display); font-weight: 700; }
-.preview-placeholder p { font-size: var(--type-meta); line-height: 1.5; }
-.page-grid { align-content: start; padding: var(--space-md); display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr)); gap: var(--space-sm); max-height: 594px; overflow: auto; background: #fbfbf8; }
+/* auto-fit rather than a fixed count: three columns everywhere the workspace is
+   wide enough, falling back on its own rather than through another breakpoint.
+   No max-height — a scroll area nested in a scrolling page traps the wheel. */
+.page-grid { align-content: start; padding: var(--space-md); display: grid; grid-template-columns: repeat(auto-fit, minmax(192px, 1fr)); gap: var(--space-md); background: #fbfbf8; }
 .page-card { min-width: 0; padding: var(--space-xs); border: 1px solid #d7dcda; border-radius: var(--radius-sm); background: white; transition: .15s ease; }
 .page-card:hover { border-color: #9cacaa; transform: translateY(-1px); }
 .page-card.current { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
@@ -391,10 +387,58 @@ img { max-width: 100%; }
 .delete-now { grid-column: 2; justify-self: start; border: 0; border-bottom: 1px solid currentColor; background: transparent; padding: 0; color: #456359; font-size: var(--type-meta); cursor: pointer; }
 .auto-clear-note { grid-column: 2; color: #61756c; font-size: var(--type-meta); }
 
+/* Detail overlay. A document stage is dark in both themes, so it adopts the
+   dark focus colour locally: #202533 scores 1.21:1 on this ground. */
+.detail-overlay {
+  --focus-color: #ffffff;
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--space-md);
+  padding: var(--space-xl);
+  background: #11131a;
+  color: #f4f6fb;
+}
+.detail-topbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
+.detail-topbar > div { min-width: 0; display: grid; gap: var(--space-2xs); }
+.detail-topbar strong { font-size: var(--type-body); line-height: var(--type-body-leading); font-weight: 700; }
+.detail-topbar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #a5adbc; font-size: var(--type-meta); line-height: var(--type-meta-leading); }
+.detail-close { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs); min-width: var(--size-touch-min); min-height: var(--size-touch-min); padding: var(--space-xs) var(--space-md); border: 1px solid #626b7f; border-radius: var(--radius-md); background: transparent; color: inherit; font-size: var(--type-control); line-height: var(--type-control-leading); font-weight: 700; cursor: pointer; }
+.detail-stage { min-width: 0; min-height: 0; display: grid; grid-template-columns: var(--space-3xl) minmax(0, 1fr) var(--space-3xl); align-items: center; gap: var(--space-md); }
+.detail-previous,
+.detail-next { display: grid; place-items: center; min-width: var(--size-touch-min); min-height: var(--size-touch-min); border: 1px solid #626b7f; border-radius: var(--radius-md); background: transparent; color: inherit; font-size: var(--type-action); line-height: var(--type-action-leading); cursor: pointer; }
+.detail-close:hover,
+.detail-previous:hover:not(:disabled),
+.detail-next:hover:not(:disabled) { background: rgba(255,255,255,.09); }
+.detail-previous:disabled,
+.detail-next:disabled { opacity: .38; cursor: default; }
+/* The row has to be definite, or it sizes to the image and the image's own
+   max-height: 100% resolves against that — letting a tall page run off screen. */
+.detail-frame { position: relative; min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-rows: minmax(0, 1fr); place-items: center; }
+.detail-image { display: block; max-width: 100%; max-height: 100%; margin-inline: auto; object-fit: contain; background: white; box-shadow: 0 18px 50px rgba(0,0,0,.5); }
+.detail-empty { margin: 0; color: #a5adbc; font-size: var(--type-body); line-height: var(--type-body-leading); }
+.detail-status { position: absolute; left: 50%; bottom: var(--space-md); transform: translateX(-50%); margin: 0; padding: var(--space-2xs) var(--space-sm); border: 1px solid #626b7f; border-radius: var(--radius-pill); background: #181b24; color: #f4f6fb; font-size: var(--type-meta); line-height: var(--type-meta-leading); }
+
+/* Side arrows would each take a third of a phone's width away from the page. */
+@media (max-width: 767px) {
+  .detail-overlay { gap: var(--space-sm); padding: var(--space-md); }
+  .detail-stage { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: minmax(0, 1fr) auto; gap: var(--space-sm); }
+  .detail-frame { grid-column: 1 / -1; grid-row: 1; }
+  .detail-previous { grid-column: 1; grid-row: 2; }
+  .detail-next { grid-column: 2; grid-row: 2; }
+}
+
 @media (max-width: 1080px) {
   .tool-grid { grid-template-columns: repeat(3, 1fr); }
-  .preview-layout { grid-template-columns: 260px minmax(0, 1fr); }
-  .page-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+}
+
+/* Tablet. The settings panel keeps a fixed share rather than shrinking to the
+   grid's leftovers, so its option rows stay on one line. */
+@media (max-width: 1023px) {
+  .workspace-grid { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: var(--space-lg); }
+  .page-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 820px) {
@@ -413,13 +457,16 @@ img { max-width: 100%; }
   .preview-steps li { min-height: 126px; align-content: start; grid-template-columns: 1fr; gap: var(--space-xs); padding: var(--space-sm); }
   .step-number { width: 38px; height: 38px; }
   .flow-privacy { margin-top: var(--space-lg); }
-  .workspace-grid { grid-template-columns: 1fr; overflow: visible; }
-  .settings-panel { min-height: auto; position: static; border-right: 0; border-bottom: 1px solid #d7ddda; }
   .settings-panel > h3 { margin-top: var(--space-md); }
-  .preview-layout { grid-template-columns: 1fr; }
-  .main-preview { border-right: 0; border-bottom: 1px solid #d9dfdb; }
-  .paper-preview { max-width: 360px; }
-  .page-grid { max-height: 630px; grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+}
+
+/* One column. A sticky panel above a tall grid would pin a whole screen of
+   settings over the pages the user is arranging. */
+@media (max-width: 767px) {
+  .workspace-grid { grid-template-columns: minmax(0, 1fr); gap: var(--space-xl); }
+  .settings-panel { width: 100%; position: static; }
+  .page-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-sm); }
+  .page-card { width: 100%; min-width: 0; }
 }
 
 @media (max-width: 620px) {
@@ -458,8 +505,7 @@ img { max-width: 100%; }
   .settings-panel { padding: var(--space-md); }
   .manager-topbar { padding: var(--space-sm); }
   .manager-topbar p { display: none; }
-  .main-preview { padding: var(--space-lg); }
-  .page-grid { grid-template-columns: repeat(2, minmax(112px, 1fr)); padding: var(--space-xs); gap: var(--space-xs); max-height: 600px; }
+  .page-grid { padding: var(--space-xs); gap: var(--space-xs); }
   .download-result { grid-template-columns: auto 1fr; padding: var(--space-md); }
   .result-icon { grid-row: auto; width: 40px; height: 40px; }
   .download-button { grid-column: 1 / -1; grid-row: auto; justify-content: space-between; }
