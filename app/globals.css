@@ -359,9 +359,34 @@ img { max-width: 100%; }
 .page-card-top small { min-width: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: var(--type-meta); line-height: 1.5; }
 .page-card-top label { display: flex; align-items: center; gap: var(--space-2xs); cursor: pointer; }
 .page-card-top input { width: 15px; height: 15px; accent-color: var(--accent); }
-.thumb-frame { width: 100%; padding: 0; aspect-ratio: 1 / 1.35; border: 1px solid #e0e3e1; background: #f4f5f2; display: grid; place-items: center; overflow: hidden; cursor: pointer; }
+/* Every state occupies this one frame. Its height comes from the card's width
+   through the aspect ratio rather than a fixed pixel figure, so loading, the
+   image, the limit notice and the error all match at every breakpoint. */
+.thumb-frame { width: 100%; padding: 0; aspect-ratio: 1 / 1.35; border: 1px solid #e0e3e1; border-radius: var(--radius-xs); background: #f4f5f2; display: grid; grid-template-rows: minmax(0, 1fr); place-items: stretch; overflow: hidden; cursor: pointer; text-align: center; }
 .thumb-frame img { width: 100%; height: 100%; object-fit: contain; transition: transform .2s ease; }
-.thumb-frame > span { color: #a6afac; font-size: var(--type-heading-md); font-weight: 700; }
+
+.thumb-state { min-width: 0; min-height: 0; display: grid; align-content: center; justify-items: center; gap: var(--space-xs); padding: var(--space-sm); overflow: hidden; }
+.thumb-state-title { color: var(--ink); font-size: var(--type-body); line-height: var(--type-body-leading); }
+.thumb-state-description { color: var(--text-subtle); font-size: var(--type-meta); line-height: var(--type-meta-leading); }
+.thumb-status { color: var(--text-secondary); font-size: var(--type-meta); line-height: var(--type-meta-leading); }
+
+/* A still outline of a page, not a shimmer: the workspace has no pulse anywhere
+   else, and one that never stops reads as a fault rather than as progress. */
+.thumb-skeleton { align-self: stretch; justify-self: stretch; display: flex; flex-direction: column; justify-content: center; gap: var(--space-xs); padding: var(--space-md); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); }
+.thumb-skeleton > span { display: block; height: var(--space-xs); border-radius: var(--radius-xs); background: var(--line); }
+.thumb-skeleton > span:nth-child(1) { width: 64%; }
+.thumb-skeleton > span:nth-child(2) { width: 88%; }
+.thumb-skeleton > span:nth-child(3) { width: 72%; }
+.thumb-skeleton > span:nth-child(4) { width: 48%; }
+
+.thumb-large-number { color: var(--text-secondary); font-size: var(--type-display); line-height: var(--type-display-leading); font-weight: 600; }
+.thumb-error-mark { display: grid; place-items: center; width: 32px; height: 32px; border: 2px solid var(--red); border-radius: 50%; color: var(--red); font-size: var(--type-heading-sm); line-height: 1; font-weight: 700; }
+.thumb-state--error .thumb-state-title { color: var(--red); font-weight: 700; }
+
+/* Looks like the button it is. The whole frame is the target — nesting a real
+   button inside one is invalid, and the frame already clears 44px. */
+.thumb-retry { display: inline-flex; align-items: center; justify-content: center; min-height: var(--size-touch-min); padding: var(--space-xs) var(--space-md); border: 1px solid var(--line); border-radius: var(--radius-md); color: var(--ink); font-size: var(--type-control); line-height: var(--type-control-leading); font-weight: 600; }
+.thumb-frame--error:hover .thumb-retry { border-color: var(--red); background: var(--panel); }
 .page-controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2xs); margin-top: var(--space-xs); }
 .page-controls button { min-height: 32px; border: 1px solid #dce0de; border-radius: var(--radius-sm); background: #f8f9f7; color: #4e5a60; font-size: var(--type-meta); cursor: pointer; }
 .page-controls button:hover:not(:disabled) { border-color: #9aaca6; background: white; }
@@ -506,6 +531,11 @@ img { max-width: 100%; }
   .manager-topbar { padding: var(--space-sm); }
   .manager-topbar p { display: none; }
   .page-grid { padding: var(--space-xs); gap: var(--space-xs); }
+  /* 142px cards: the mark, the heading and the button fit, the sentence does
+     not. It stays in the frame's aria-label. */
+  .thumb-state { gap: var(--space-2xs); padding: var(--space-xs); }
+  .thumb-state-description { display: none; }
+  .thumb-skeleton { padding: var(--space-xs); }
   .download-result { grid-template-columns: auto 1fr; padding: var(--space-md); }
   .result-icon { grid-row: auto; width: 40px; height: 40px; }
   .download-button { grid-column: 1 / -1; grid-row: auto; justify-content: space-between; }

@@ -43,6 +43,11 @@ import {
 import { nextToolIndex } from "./lib/tool-navigation";
 import { createDetailRenderQueue } from "./lib/detail-render";
 import { focusableWithin, nextTrapTarget } from "./lib/focus-trap";
+import {
+  EAGER_PREVIEW_LIMIT,
+  previewState,
+  unavailableReason,
+} from "./lib/preview-state";
 import { canvasToBlob, createPageRenderer } from "./lib/page-renderer";
 import { isLeavingDropTarget } from "./lib/drag-and-drop";
 
@@ -52,6 +57,7 @@ type WorkspacePage = PageRecord & {
   fileName: string;
   previewUrl?: string;
   previewFailed?: boolean;
+  previewSkipped?: boolean;
 };
 
 type ResultFile = {
@@ -201,6 +207,11 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPageId]);
 
+  function retryPreview(page: WorkspacePage) {
+    updatePreviewState(page.id, { previewFailed: false, previewSkipped: false });
+    requestPreview(page);
+  }
+
   function openDetail(pageId: string, opener: HTMLElement | null) {
     detailOpenerRef.current = opener;
     setDetailPageId(pageId);
@@ -339,8 +350,10 @@ export default function Home() {
               rotation: 0,
               fileName: file.name,
             };
-            if (newPages.length < 36) {
+            if (newPages.length < EAGER_PREVIEW_LIMIT) {
               page.previewUrl = await renderer.createPreview(source, page);
+            } else {
+              page.previewSkipped = true;
             }
             newPages.push(page);
             if (pageNumber % 8 === 0) await yieldToBrowser();
@@ -800,7 +813,10 @@ export default function Home() {
                 <p><span className="status-dot" /> อยู่ในอุปกรณ์</p>
               </div>
               <div className="page-grid" role="list" aria-label="หน้าทั้งหมด">
-                {pages.map((page, index) => (
+                {pages.map((page, index) => {
+                  const state = previewState(page);
+                  const isError = state === "error";
+                  return (
                   <article
                     key={page.id}
                     role="listitem"
@@ -816,22 +832,59 @@ export default function Home() {
                       <small>{page.fileName}</small>
                     </div>
                     <button
-                      className="thumb-frame"
+                      className={`thumb-frame thumb-frame--${state}`}
                       type="button"
                       onClick={(event) => {
+                        if (isError) {
+                          retryPreview(page);
+                          return;
+                        }
                         setCurrentPageId(page.id);
                         openDetail(page.id, event.currentTarget);
                       }}
-                      aria-label={`ดูหน้า ${index + 1} แบบเต็มจอ`}
+                      aria-busy={state === "loading" || undefined}
+                      aria-label={
+                        isError
+                          ? `สร้าง Preview หน้า ${index + 1} ไม่สำเร็จ ลองใหม่`
+                          : state === "unavailable"
+                            ? `ดูหน้า ${index + 1} แบบเต็มจอ ยังไม่มี Preview ${unavailableReason()}`
+                            : `ดูหน้า ${index + 1} แบบเต็มจอ`
+                      }
                     >
-                      {page.previewUrl ? (
+                      {state === "ready" && (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={page.previewUrl}
                           alt=""
                           style={{ transform: `rotate(${page.rotation}deg)` }}
                         />
-                      ) : <span>{page.pageNumber}</span>}
+                      )}
+
+                      {state === "loading" && (
+                        <span className="thumb-state">
+                          <span className="thumb-skeleton" aria-hidden="true">
+                            <span /><span /><span /><span />
+                          </span>
+                          <span className="thumb-status">กำลังสร้าง Preview…</span>
+                        </span>
+                      )}
+
+                      {state === "unavailable" && (
+                        <span className="thumb-state thumb-state--unavailable">
+                          <strong className="thumb-large-number" aria-hidden="true">{page.pageNumber}</strong>
+                          <span className="thumb-state-title">ยังไม่มี Preview</span>
+                          <span className="thumb-state-description">{unavailableReason()}</span>
+                        </span>
+                      )}
+
+                      {isError && (
+                        <span className="thumb-state thumb-state--error">
+                          <span className="thumb-error-mark" aria-hidden="true">!</span>
+                          <span className="thumb-state-title">สร้าง Preview ไม่สำเร็จ</span>
+                          <span className="thumb-state-description">ไฟล์อาจเสียหาย หรือหน่วยความจำไม่พอ</span>
+                          <span className="thumb-retry">ลองใหม่</span>
+                        </span>
+                      )}
                     </button>
                     <div className="page-controls">
                       <button type="button" onClick={() => reorderPage(index, -1)} disabled={index === 0 || isBusy} aria-label={`เลื่อนหน้า ${index + 1} ไปซ้าย`}>←</button>
@@ -840,7 +893,8 @@ export default function Home() {
                       <button className="delete-page" type="button" onClick={() => removePage(page.id)} disabled={isBusy} aria-label={`ลบหน้า ${index + 1}`}>×</button>
                     </div>
                   </article>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>
