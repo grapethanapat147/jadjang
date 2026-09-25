@@ -121,3 +121,31 @@ export function createDetailRenderQueue<T>(): DetailRenderQueue<T> {
     },
   };
 }
+
+export type RenderBox = { width: number; height: number };
+
+/**
+ * Whether a new measurement is close enough to reuse the render made for the
+ * old one. A window drag fires hundreds of sizes, and re-rendering a PDF page
+ * for each would be wasteful; a few percent is invisible at these sizes.
+ *
+ * A zero box is never "the same" as a real one: the frame measures zero when
+ * the overlay mounts in a hidden or unlaid-out tab, and that measurement has
+ * to be replaced rather than kept.
+ */
+export function sameRenderBox(
+  previous: RenderBox | null,
+  next: RenderBox,
+  tolerance = 0.08,
+): boolean {
+  if (!previous) {
+    return false;
+  }
+  if (previous.width <= 0 || previous.height <= 0 || next.width <= 0 || next.height <= 0) {
+    return previous.width === next.width && previous.height === next.height;
+  }
+  return (
+    Math.abs(previous.width - next.width) / previous.width < tolerance &&
+    Math.abs(previous.height - next.height) / previous.height < tolerance
+  );
+}

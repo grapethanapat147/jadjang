@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDetailRenderQueue, detailRenderSize } from "../app/lib/detail-render.ts";
+import { createDetailRenderQueue, detailRenderSize, sameRenderBox } from "../app/lib/detail-render.ts";
 import { nextTrapTarget } from "../app/lib/focus-trap.ts";
 
 const A4 = { pageWidth: 595, pageHeight: 842 };
@@ -239,4 +239,37 @@ test("an empty trap has nowhere to send focus", () => {
 test("a single control keeps focus on itself", () => {
   assert.equal(nextTrapTarget(["close"], "close", false), "close");
   assert.equal(nextTrapTarget(["close"], "close", true), "close");
+});
+
+// --------------------------------------------------- re-measuring the box --
+
+test("the first measurement always counts", () => {
+  assert.equal(sameRenderBox(null, { width: 800, height: 600 }), false);
+});
+
+test("a zero box is never mistaken for a real one", () => {
+  // The frame measures zero in a tab that has not been laid out; keeping that
+  // reading is what would leave the overlay on the blurry thumbnail for good.
+  assert.equal(sameRenderBox({ width: 0, height: 0 }, { width: 1104, height: 787 }), false);
+  assert.equal(sameRenderBox({ width: 1104, height: 787 }, { width: 0, height: 0 }), false);
+  assert.equal(sameRenderBox({ width: 1104, height: 0 }, { width: 1104, height: 787 }), false);
+});
+
+test("two zero readings in a row do not churn", () => {
+  assert.equal(sameRenderBox({ width: 0, height: 0 }, { width: 0, height: 0 }), true);
+});
+
+test("a few pixels of drag do not trigger a re-render", () => {
+  assert.equal(sameRenderBox({ width: 1104, height: 787 }, { width: 1110, height: 790 }), true);
+});
+
+test("a real resize does trigger one", () => {
+  assert.equal(sameRenderBox({ width: 1104, height: 787 }, { width: 1400, height: 787 }), false);
+  assert.equal(sameRenderBox({ width: 1104, height: 787 }, { width: 1104, height: 500 }), false);
+});
+
+test("the tolerance sits either side of the boundary", () => {
+  const base = { width: 1000, height: 1000 };
+  assert.equal(sameRenderBox(base, { width: 1079, height: 1000 }), true, "7.9% must be tolerated");
+  assert.equal(sameRenderBox(base, { width: 1081, height: 1000 }), false, "8.1% must re-render");
 });

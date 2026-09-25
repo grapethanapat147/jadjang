@@ -41,7 +41,7 @@ import {
   type OutputBuilderDeps,
 } from "./lib/output-builder";
 import { nextToolIndex } from "./lib/tool-navigation";
-import { createDetailRenderQueue } from "./lib/detail-render";
+import { createDetailRenderQueue, sameRenderBox, type RenderBox } from "./lib/detail-render";
 import { focusableWithin, nextTrapTarget } from "./lib/focus-trap";
 import {
   EAGER_PREVIEW_LIMIT,
@@ -110,6 +110,7 @@ export default function Home() {
   const [currentPageId, setCurrentPageId] = useState<string | null>(null);
   const [detailPageId, setDetailPageId] = useState<string | null>(null);
   const [detailRender, setDetailRender] = useState<{ key: string; url: string | null } | null>(null);
+  const [detailBox, setDetailBox] = useState<RenderBox | null>(null);
   const [activeTool, setActiveTool] = useState<ToolId>("organize");
   const [compressionLevel, setCompressionLevel] = useState<CompressionLevel>("balanced");
   const [convertFormat, setImageFormat] = useState<ImageFormat>("jpg");
@@ -141,8 +142,14 @@ export default function Home() {
   const currentPage = pages.find((page) => page.id === currentPageId) ?? pages[0];
   const detailIndex = pages.findIndex((page) => page.id === detailPageId);
   const detailPage = detailIndex === -1 ? null : pages[detailIndex];
-  /** Rotation is in the key: a rotated page needs rendering again. */
-  const detailKey = detailPage ? `${detailPage.id}:${detailPage.rotation}` : null;
+  /**
+   * Rotation and the displayed size are both in the key: a rotated page needs
+   * rendering again, and so does one the window has been resized around.
+   */
+  const detailKey =
+    detailPage && detailBox && detailBox.width > 0 && detailBox.height > 0
+      ? `${detailPage.id}:${detailPage.rotation}:${Math.round(detailBox.width)}x${Math.round(detailBox.height)}`
+      : null;
   const detailIsCurrent = detailRender !== null && detailRender.key === detailKey;
   const detailImage =
     (detailIsCurrent ? detailRender.url : null) ?? detailPage?.previewUrl ?? null;
@@ -272,11 +279,25 @@ export default function Home() {
   }, [detailPageId, detailIndex, pages.length]);
 
   useEffect(() => {
-    if (!detailPage || !detailKey) return;
-    const source = sources.find((item) => item.id === detailPage.sourceId);
     const frame = detailStageRef.current;
-    const box = { width: frame?.clientWidth ?? 0, height: frame?.clientHeight ?? 0 };
-    if (!source || !(box.width > 0) || !(box.height > 0)) return;
+    if (!detailPageId || !frame) return;
+
+    // Measured continuously rather than once. The frame comes back zero when
+    // the overlay mounts in a tab that has not been laid out, and a one-shot
+    // read would leave the overlay on the blurry thumbnail for good.
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setDetailBox((current) => (sameRenderBox(current, { width, height }) ? current : { width, height }));
+    });
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, [detailPageId]);
+
+  useEffect(() => {
+    if (!detailPage || !detailKey || !detailBox) return;
+    const source = sources.find((item) => item.id === detailPage.sourceId);
+    const box = detailBox;
+    if (!source) return;
 
     let cancelled = false;
     detailQueue
@@ -297,7 +318,8 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-    // Re-renders when the page or its rotation changes, which is what the key is.
+    // Re-renders when the page, its rotation or its displayed size changes,
+    // which is what the key is.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailKey]);
 

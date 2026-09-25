@@ -229,8 +229,17 @@ test("closing returns focus to the thumbnail it was opened from", () => {
 test("the overlay renders for the box it is displayed in, not the thumbnail", () => {
   assert.match(page, /renderer\.renderDetail\(source, detailPage, box, window\.devicePixelRatio/);
   // Both edges: a portrait page in a landscape box is limited by the height.
-  assert.match(page, /frame\?\.clientWidth/);
-  assert.match(page, /frame\?\.clientHeight/);
+  assert.match(page, /const box = detailBox;/);
+  assert.match(page, /entry\.contentRect/);
+});
+
+test("the overlay keeps measuring, so a zero reading is not final", () => {
+  // A one-shot measurement in an unlaid-out tab left the overlay showing the
+  // upscaled thumbnail with no way back.
+  assert.match(page, /new ResizeObserver/);
+  assert.match(page, /sameRenderBox\(current, \{ width, height \}\)/);
+  // The size is part of the render key, or a resize would hit the old cache.
+  assert.match(page, /Math\.round\(detailBox\.width\)\}x\$\{Math\.round\(detailBox\.height\)\}/);
 });
 
 test("every overlay control meets the touch minimum", () => {
