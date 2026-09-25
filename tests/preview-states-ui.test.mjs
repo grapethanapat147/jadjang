@@ -103,7 +103,7 @@ test("the over-limit state offers nothing to retry", () => {
 });
 
 test("retry sends the card straight back to loading", () => {
-  const retry = rule.toString() && page.match(/function retryPreview[\s\S]*?\n  \}/)[0];
+  const retry = page.match(/function retryPreview[\s\S]*?\n {2}\}/)[0];
   // Clearing both flags is what previewState reads as "loading" again.
   assert.match(retry, /previewFailed:\s*false/);
   assert.match(retry, /previewSkipped:\s*false/);
