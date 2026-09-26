@@ -662,7 +662,8 @@ export default function Home() {
 
       <header className="site-header">
         <a className="brand" href="#top" aria-label="จัดแจง หน้าหลัก">
-          <span className="brand-mark">จ</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="brand-mark" src="/icon.svg" alt="" width={40} height={40} />
           <span>จัดแจง</span>
         </a>
         <div className="header-tools">
