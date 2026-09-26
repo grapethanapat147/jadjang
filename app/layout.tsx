@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import "@fontsource-variable/anuphan";
 import "./globals.css";
+import { THEME_BOOT_SCRIPT } from "./lib/theme";
 
 const title = "จัดแจง — จัดเอกสารให้พร้อมส่ง";
 const description =
@@ -43,6 +44,10 @@ export default function RootLayout({
   return (
     <html lang="th">
       <head>
+        {/* Applies a saved theme before the first paint. Without it the page
+            renders in the system theme and then flips, which is worse than
+            having no switcher at all. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
         {/* Declared here rather than through metadata so they land in <head>,
             where a browser looks when deciding whether the app is installable. */}
         <link rel="manifest" href="/manifest.webmanifest" />

@@ -237,13 +237,28 @@ img { max-width: 100%; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-xl);
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-xl);
   border-bottom: 1px solid var(--line);
   animation: page-rise .55s cubic-bezier(.2,.8,.2,1) both;
 }
 .brand { display: inline-flex; align-items: center; gap: var(--space-sm); width: max-content; font-size: var(--type-heading-sm); font-weight: 700; letter-spacing: -.025em; }
 .brand-mark { display: grid; place-items: center; width: 38px; height: 42px; border-radius: var(--radius-sm) var(--radius-lg) var(--radius-sm) var(--radius-sm); background: var(--blue); color: var(--on-accent); font-size: var(--type-heading-sm); box-shadow: 0 7px 18px rgba(66,99,235,.2); }
 .trust-pill { display: flex; align-items: center; gap: var(--space-xs); border: 1px solid var(--success-border); background: var(--success-surface); color: var(--success-ink); border-radius: var(--radius-pill); padding: var(--space-sm) var(--space-md); font-size: var(--type-meta); font-weight: 600; }
+.header-tools { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; justify-content: flex-end; }
+
+/* A segmented control rather than a toggle: "system" is a real third choice,
+   and cycling through three states blind is no way to reach the one you want.
+   Selection is carried by the raised face and the border as well as the
+   colour, plus aria-checked. */
+.theme-switcher { display: flex; gap: var(--space-2xs); padding: var(--space-2xs); border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--surface-sunken); }
+.theme-option { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2xs); min-height: var(--size-touch-min); padding: 0 var(--space-sm); border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; color: var(--text-secondary); font-size: var(--type-meta); line-height: var(--type-meta-leading); font-weight: 700; cursor: pointer; }
+.theme-option:hover:not(.selected) { color: var(--ink); }
+/* The brand blue, which does not flip with the theme: a raised white face is
+   only 1.06:1 against the track in the light theme and all but disappears. */
+.theme-option.selected { border-color: var(--blue); background: var(--blue); color: var(--on-accent); }
+.theme-option-icon { font-size: var(--type-body); line-height: 1; }
+
 .status-dot { display: inline-block; flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(26,170,114,.12); }
 
 .tools-section,
@@ -316,6 +331,7 @@ img { max-width: 100%; }
 .clear-button:focus-visible,
 .delete-now:focus-visible,
 .download-button:focus-visible,
+.theme-option:focus-visible,
 .detail-close:focus-visible,
 .detail-previous:focus-visible,
 .detail-next:focus-visible,
@@ -615,6 +631,21 @@ img { max-width: 100%; }
   .site-header { min-height: 68px; }
   .brand { font-size: var(--type-heading-sm); }
   .trust-pill { padding: var(--space-xs) var(--space-sm); font-size: var(--type-meta); }
+  .header-tools { gap: var(--space-xs); }
+  /* 44px squares. The names would push the header past a 360px screen, so
+     they are left to the accessibility tree. */
+  .theme-option { min-width: var(--size-touch-min); padding: 0; }
+  .theme-option-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
   .tools-section { padding: var(--space-2xl) 0 var(--space-2xl); }
   .tool-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-xs); }
   .tool-card { min-height: 228px; padding: var(--space-md); border-radius: var(--radius-lg); }

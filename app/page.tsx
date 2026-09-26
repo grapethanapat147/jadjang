@@ -50,6 +50,7 @@ import {
 } from "./lib/preview-state";
 import { canvasToBlob, createPageRenderer } from "./lib/page-renderer";
 import { isLeavingDropTarget } from "./lib/drag-and-drop";
+import { ThemeSwitcher } from "./ThemeSwitcher";
 
 type ToolId = "organize" | "merge" | "split" | "compress" | "convert";
 
@@ -664,7 +665,10 @@ export default function Home() {
           <span className="brand-mark">จ</span>
           <span>จัดแจง</span>
         </a>
-        <div className="trust-pill"><span className="status-dot" />ไฟล์ไม่ออกจากอุปกรณ์</div>
+        <div className="header-tools">
+          <div className="trust-pill"><span className="status-dot" />ไฟล์ไม่ออกจากอุปกรณ์</div>
+          <ThemeSwitcher />
+        </div>
       </header>
 
       <section className="tools-section" aria-labelledby="tools-title">
