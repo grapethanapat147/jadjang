@@ -11,7 +11,7 @@
  * demonstrates that rather than asserting it.
  */
 
-const CACHE = "jadjang-v1";
+const CACHE = "jadjang-v2";
 
 const PRECACHE = [
   "/",

@@ -125,9 +125,12 @@ const files = new Map([
   ["/_next/static/media/pdf.worker.min.xyz.mjs", "pdf worker"],
 ]);
 
+/** The cache name the worker itself declares, so a bump needs no edit here. */
+const CACHE_NAME = source.match(/const CACHE = "([^"]+)"/)[1];
+
 test("install fills the cache with the shell", async () => {
   const { caches } = await bootWorker(files);
-  const cache = await caches.open("jadjang-v1");
+  const cache = await caches.open(CACHE_NAME);
   const paths = (await cache.keys()).map((request) => new URL(request.url).pathname);
   assert.ok(paths.includes("/"), "the page itself");
   assert.ok(paths.includes("/tool-icons/convert.png"), "tool icons");
@@ -206,5 +209,5 @@ test("activate clears caches left by an older version", async () => {
   await worker.listeners.activate({ waitUntil: (promise) => pending.push(promise) });
   await Promise.all(pending);
 
-  assert.deepEqual(await worker.caches.keys(), ["jadjang-v1"]);
+  assert.deepEqual(await worker.caches.keys(), [CACHE_NAME]);
 });
