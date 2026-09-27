@@ -9,6 +9,7 @@ const iconSvg = await readText("icon.svg");
 const faviconSvg = await readText("favicon.svg");
 const manifest = JSON.parse(await readText("manifest.webmanifest"));
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 
 const BRAND_BLUE = "#4263eb";
@@ -135,4 +136,24 @@ test("the header mark is square, so the logo is not stretched", () => {
   assert.equal(width[1], height[1], "a square mark in a non-square box would distort it");
   // The plate is part of the artwork now.
   assert.doesNotMatch(rule, /background:/);
+});
+
+// --------------------------------------------------------- social preview --
+
+test("the share image is the size the metadata promises", async () => {
+  // A crawler trusts the declared width and height; if the file is resized
+  // and these are not, the card renders letterboxed or cropped.
+  const declared = {
+    width: Number(layout.match(/width:\s*(\d+)/)[1]),
+    height: Number(layout.match(/height:\s*(\d+)/)[1]),
+  };
+  const bytes = await read("og-jadjang.png");
+  assert.deepEqual([...bytes.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10], "not a PNG");
+  assert.equal(bytes.readUInt32BE(16), declared.width, "actual width vs the metadata");
+  assert.equal(bytes.readUInt32BE(20), declared.height, "actual height vs the metadata");
+});
+
+test("the metadata points at the share image that exists", async () => {
+  assert.match(layout, /\/og-jadjang\.png/);
+  await assert.doesNotReject(read("og-jadjang.png"));
 });
