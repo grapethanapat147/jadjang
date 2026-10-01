@@ -534,6 +534,9 @@ img { max-width: 100%; }
 .progress-track { height: 5px; margin-top: var(--space-xs); border-radius: var(--radius-md); background: var(--info-track); overflow: hidden; }
 .progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease; }
 .privacy-note { display: flex; justify-content: center; align-items: center; gap: var(--space-xs); margin: var(--space-md) var(--space-2xs) 0; color: var(--text-secondary); font-size: var(--type-meta); text-align: center; }
+/* The disclosure that qualifies the line above it. Secondary rather than
+   subtle: it is a statement about the user's data, and has to be read. */
+.usage-note { max-width: 560px; margin: var(--space-2xs) auto 0; color: var(--text-secondary); font-size: var(--type-meta); line-height: var(--type-meta-leading); text-align: center; }
 /* Decorative bullet, not text to read, so it stays off the type scale. */
 .lock-symbol { color: var(--green); font-size: 8px; }
 

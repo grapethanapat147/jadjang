@@ -5,8 +5,8 @@ import { defineConfig } from "vite";
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 /**
- * Bindings for local dev. The site stores nothing server-side, so it needs no
- * D1, R2 or KV.
+ * Bindings for local dev. The only server-side state is USAGE_DB: anonymous
+ * daily totals of visits and tool runs. Documents are never stored or sent.
  *
  * The deployable config is generated from this by @cloudflare/vite-plugin at
  * dist/server/wrangler.json during `npm run build`; that is the file
@@ -15,6 +15,13 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
+  d1_databases: [
+    {
+      binding: "USAGE_DB",
+      database_name: "jadjang-usage",
+      database_id: "88c36410-2418-4137-a34d-6ee54b82d449",
+    },
+  ],
 };
 
 export default defineConfig(async () => {

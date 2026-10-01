@@ -29,8 +29,14 @@ Supported MVP workflows are page organization, PDF merging, page splitting, comp
 - PDF primitives: `pdf-lib`; rendering/previews: `pdfjs-dist`; ZIP output: `jszip`.
 - Deployment: Cloudflare Workers via Wrangler. `npm run deploy` rebuilds and ships the config that
   `@cloudflare/vite-plugin` generates at `dist/server/wrangler.json`; do not hand-write a wrangler config
-  beside it. No D1, R2 or KV binding is needed, and the Images binding is optional - `/_vinext/image`
-  answers 501 without it, which is fine while the site uses plain `<img>` assets.
+  beside it. The Images binding is optional - `/_vinext/image` answers 501 without it, which is fine
+  while the site uses plain `<img>` assets.
+- Usage counting (approved 2026-10-01): `POST /api/usage` in `worker/usage.ts` adds one to a daily
+  running total in the `USAGE_DB` D1 binding (`jadjang-usage`). Events are built only from the fixed
+  vocabularies in `app/lib/usage.ts` — tool, outcome, a page-count bucket, a visit-source bucket —
+  and the server rejects anything else. No document data, file names, sizes, identifiers or
+  timestamps finer than the UTC day. Global Privacy Control and Do Not Track switch it off. Any new
+  field needs the same explicit approval as the rule above.
 
 Avoid replacing the existing architecture or package manager unless the change is clearly necessary. Prefer small, testable increments.
 

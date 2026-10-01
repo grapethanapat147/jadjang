@@ -51,6 +51,8 @@ import {
 import { canvasToBlob, createPageRenderer } from "./lib/page-renderer";
 import { isLeavingDropTarget } from "./lib/drag-and-drop";
 import { ThemeSwitcher } from "./ThemeSwitcher";
+import { pageBucket } from "./lib/usage";
+import { reportUsage, reportVisitOnce } from "./lib/report-usage";
 
 type ToolId = "organize" | "merge" | "split" | "compress" | "convert";
 
@@ -184,6 +186,20 @@ export default function Home() {
       if (resultUrl.current) URL.revokeObjectURL(resultUrl.current);
     };
   }, [autoClear, renderer, detailQueue]);
+
+  useEffect(() => {
+    reportVisitOnce({
+      referrer: document.referrer,
+      host: location.host,
+      storage: (() => {
+        try {
+          return window.sessionStorage;
+        } catch {
+          return null;
+        }
+      })(),
+    });
+  }, []);
 
   useEffect(() => {
     // Dev is served unhashed and hot-reloaded, so caching it would fight HMR.
@@ -599,6 +615,7 @@ export default function Home() {
         );
       }
       setProgress({ label: "ตรวจสอบผลลัพธ์เรียบร้อย", percent: 100 });
+      reportUsage({ kind: "run", tool: activeTool, outcome: "success", pages: pageBucket(pages.length) });
       window.setTimeout(() => {
         setProgress(null);
         document.getElementById("download-result")?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -606,6 +623,7 @@ export default function Home() {
     } catch (caught) {
       setError(friendlyError(caught));
       setProgress(null);
+      reportUsage({ kind: "run", tool: activeTool, outcome: "failure", pages: pageBucket(pages.length) });
     } finally {
       setIsBusy(false);
     }
@@ -943,6 +961,7 @@ export default function Home() {
           </div>
         )}
         <p className="privacy-note"><span className="lock-symbol">●</span>ประมวลผลในเบราว์เซอร์ ไม่มีการส่งไฟล์ขึ้นเซิร์ฟเวอร์</p>
+        <p className="usage-note">นับเฉพาะสถิติการใช้งานแบบรวม เช่น ใช้เครื่องมือไหนและสำเร็จหรือไม่ ไม่เก็บไฟล์ ชื่อไฟล์ หรือข้อมูลที่ระบุตัวคุณ</p>
 
         {result && (
           <div className="download-result" id="download-result">
