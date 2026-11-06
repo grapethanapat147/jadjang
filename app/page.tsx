@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
@@ -54,6 +55,8 @@ import { ThemeSwitcher } from "./ThemeSwitcher";
 import { INSTALL_DISMISSED_KEY, installHint, isIosBrowser } from "./lib/install-hint";
 import { pageBucket } from "./lib/usage";
 import { reportUsage, reportVisitOnce } from "./lib/report-usage";
+import { GAME_MODE_CHANGE_EVENT, readGameMode, subscribeGameMode, writeGameMode } from "./lib/game-mode";
+import { Hoop, throwIntoHoop } from "./Hoop";
 
 /** Chromium's install prompt; not in the DOM typings yet. */
 type InstallPromptEvent = Event & { prompt(): Promise<void> };
@@ -137,8 +140,10 @@ export default function Home() {
   const [isBusy, setIsBusy] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
   const [installDismissed, setInstallDismissed] = useState(false);
+  const gameMode = useSyncExternalStore(subscribeGameMode, () => readGameMode(globalThis.localStorage), () => false);
 
   const workspaceRef = useRef<HTMLElement | null>(null);
+  const hoopRef = useRef<HTMLDivElement | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const detailStageRef = useRef<HTMLDivElement | null>(null);
   const detailCloseRef = useRef<HTMLButtonElement | null>(null);
@@ -483,7 +488,13 @@ export default function Home() {
   function handleInput(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
-    if (files.length) void addFiles(files);
+    if (!files.length) return;
+    void addFiles(files);
+    if (gameMode) {
+      // Thrown from the button that opened the picker.
+      const button = hoopRef.current?.parentElement?.querySelector(".primary-button")?.getBoundingClientRect();
+      if (button) throwIntoHoop(hoopRef.current, { x: button.left + button.width / 2, y: button.top + button.height / 2 }, files.map((file) => file.name));
+    }
   }
 
   function handleDragEnter(event: DragEvent<HTMLElement>) {
@@ -500,7 +511,10 @@ export default function Home() {
   function handleDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
     setIsDragging(false);
-    if (!isBusy) void addFiles(Array.from(event.dataTransfer.files));
+    if (isBusy) return;
+    const files = Array.from(event.dataTransfer.files);
+    void addFiles(files);
+    if (gameMode) throwIntoHoop(hoopRef.current, { x: event.clientX, y: event.clientY }, files.map((file) => file.name));
   }
 
   function updatePage(id: string, update: Partial<WorkspacePage>) {
@@ -669,6 +683,11 @@ export default function Home() {
     // A prompt can only be shown once.
     setInstallPrompt(null);
     await prompt.prompt().catch(() => undefined);
+  }
+
+  function toggleGameMode(on: boolean) {
+    writeGameMode(globalThis.localStorage, on);
+    window.dispatchEvent(new Event(GAME_MODE_CHANGE_EVENT));
   }
 
   function dismissInstall() {
@@ -842,8 +861,12 @@ export default function Home() {
             </div>
             <div className="upload-card">
               <label className={`drop-zone ${isDragging ? "dragging" : ""}`} htmlFor="pdf-upload">
-                <span className="upload-symbol">＋</span><strong>วาง PDF หรือรูปที่นี่</strong><span>รองรับ PDF, JPG และ PNG · สูงสุด 150 MB ต่อครั้ง</span><span>ไม่ต้องสมัคร · ไม่มีลายน้ำ · ใช้ได้ไม่จำกัดครั้ง</span><span className="primary-button">เลือกไฟล์</span>
+                {gameMode ? <Hoop ref={hoopRef} /> : <span className="upload-symbol">＋</span>}<strong>{gameMode ? "โยนไฟล์ลงห่วงได้เลย" : "วาง PDF หรือรูปที่นี่"}</strong><span>รองรับ PDF, JPG และ PNG · สูงสุด 150 MB ต่อครั้ง</span><span>ไม่ต้องสมัคร · ไม่มีลายน้ำ · ใช้ได้ไม่จำกัดครั้ง</span><span className="primary-button">เลือกไฟล์</span>
                 <input id="pdf-upload" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png" multiple onChange={handleInput} disabled={isBusy} />
+              </label>
+              <label className="game-toggle">
+                <input type="checkbox" role="switch" checked={gameMode} onChange={(event) => toggleGameMode(event.target.checked)} />
+                <span>🏀 โหมดเกม: โยนไฟล์ลงห่วง</span>
               </label>
             </div>
           </div>
