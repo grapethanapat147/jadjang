@@ -3,10 +3,12 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import {
   GAME_MODE_STORAGE_KEY,
-  SHOT_TOTAL_MS,
+  arc,
   ballLabel,
+  depthScale,
+  planShot,
   readGameMode,
-  shotKeyframes,
+  shotKind,
   writeGameMode,
 } from "../app/lib/game-mode.ts";
 
@@ -51,34 +53,89 @@ test("the ball is labelled by file type", () => {
 
 // ---------------------------------------------------------------- the shot --
 
-test("every shot ends in the net: the last frame sits under the rim and fades out", () => {
-  const rim = { x: 300, y: 100 };
-  for (const start of [{ x: 20, y: 400 }, { x: 600, y: 380 }, { x: 300, y: 90 }]) {
-    const frames = shotKeyframes(start, rim, 52, { w: 22, h: 28 });
-    const last = frames.at(-1);
-    const [, x, y] = last.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\)/).map(Number);
-    assert.ok(Math.abs(x + 22 - rim.x) < 0.1, "the ball ends centred on the rim");
-    assert.ok(y + 28 > rim.y, "the ball ends below the rim");
-    assert.ok(last.opacity < 1e-9, "and has faded out");
-    assert.equal(last.offset, 1);
+const HOOP = { rim: { x: 300, y: 200 }, halfWidth: 36, netDepth: 40, boardY: 150 };
+const position = (frame) => {
+  const [, x, y] = frame.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\)/).map(Number);
+  return { x: x + 22, y: y + 28 };
+};
+
+test("a throw follows real projectile motion: it ends on target and rises above both ends", () => {
+  const from = { x: 0, y: 500 };
+  const to = { x: 300, y: 200 };
+  const path = arc(from, to, 120);
+  assert.deepEqual(path(0), from);
+  assert.ok(Math.abs(path(1).x - to.x) < 1e-9 && Math.abs(path(1).y - to.y) < 1e-6);
+  const peak = Math.min(...Array.from({ length: 101 }, (_, i) => path(i / 100).y));
+  assert.ok(Math.abs(peak - (200 - 120)) < 1, `peaks ${peak}`);
+  // Constant gravity: equal time steps change the vertical speed by equal amounts.
+  const v = (t) => path(t + 0.01).y - path(t).y;
+  assert.ok(Math.abs((v(0.2) - v(0.1)) - (v(0.8) - v(0.7))) < 1e-6);
+});
+
+test("the ball shrinks as it travels away, as perspective does", () => {
+  assert.equal(depthScale(0, 1.4, 0.7), 1.4);
+  assert.ok(Math.abs(depthScale(1, 1.4, 0.7) - 0.7) < 1e-9);
+  // Far things shrink more slowly than a straight blend would suggest.
+  assert.ok(depthScale(0.5, 1.4, 0.7) < (1.4 + 0.7) / 2);
+});
+
+for (const kind of ["swish", "rim", "board"]) {
+  test(`a ${kind} shot always ends in the net, faded out`, () => {
+    for (const start of [{ x: 40, y: 600 }, { x: 560, y: 560 }, { x: 300, y: 420 }]) {
+      const plan = planShot(start, HOOP, kind);
+      const last = plan.ball.at(-1);
+      const end = position(last);
+      assert.ok(Math.abs(end.x - HOOP.rim.x) < 0.2, "centred on the rim");
+      assert.ok(end.y > HOOP.rim.y, "below the rim");
+      assert.equal(last.opacity, 0);
+      assert.equal(last.offset, 1);
+      assert.equal(plan.ball[0].offset, 0);
+      for (let i = 1; i < plan.ball.length; i += 1) assert.ok(plan.ball[i].offset >= plan.ball[i - 1].offset);
+      assert.equal(plan.shadow.length, plan.ball.length, "the shadow moves with the ball");
+    }
+  });
+}
+
+test("rim and bank shots touch first, then drop; a swish touches nothing", () => {
+  const start = { x: 40, y: 600 };
+  assert.equal(planShot(start, HOOP, "swish").contact, null);
+  for (const kind of ["rim", "board"]) {
+    const plan = planShot(start, HOOP, kind);
+    assert.equal(plan.contact.kind, kind);
+    assert.ok(plan.contact.at < plan.netAt && plan.netAt < plan.duration);
   }
 });
 
-test("keyframe offsets only move forward, from 0 to 1", () => {
-  const frames = shotKeyframes({ x: 0, y: 300 }, { x: 200, y: 50 }, 40, { w: 22, h: 28 });
-  assert.equal(frames[0].offset, 0);
-  for (let i = 1; i < frames.length; i += 1) assert.ok(frames[i].offset >= frames[i - 1].offset);
+test("a shot lasts about a second and a half at most", () => {
+  for (const kind of ["swish", "rim", "board"]) {
+    const { duration } = planShot({ x: 0, y: 900 }, HOOP, kind);
+    assert.ok(duration > 900 && duration <= 1600, `${kind}: ${duration}ms`);
+  }
 });
 
-test("one shot stays about a second, as tuned in the prototype", () => {
-  assert.ok(SHOT_TOTAL_MS > 800 && SHOT_TOTAL_MS < 1300, `${SHOT_TOTAL_MS}ms`);
+test("a batch mixes the ways a shot goes in", () => {
+  assert.deepEqual([0, 1, 2, 3].map(shotKind), ["rim", "swish", "board", "rim"]);
 });
 
 // ---------------------------------------------------------------- the page --
 
-test("the files are read straight away; the shot is never awaited", () => {
-  assert.match(page, /void addFiles\(files\);\n\s+if \(gameMode\)/);
+test("files are read while the ball flies; only the reveal waits for it to go in", () => {
+  const addFiles = page.slice(page.indexOf("async function addFiles"), page.indexOf("function handleInput"));
+  const reveal = addFiles.indexOf("const reveal = onAccepted?.()");
+  // The shot starts after validation, before any file is read...
+  assert.ok(reveal > addFiles.indexOf("validateInputFiles(candidates)"));
+  assert.ok(reveal < addFiles.indexOf("await file.arrayBuffer()"));
+  // ...and is awaited only after reading, just before the workspace is shown.
+  const held = addFiles.indexOf("if (reveal) await reveal;");
+  assert.ok(held > addFiles.indexOf("await file.arrayBuffer()"));
+  assert.ok(held < addFiles.indexOf("setPages(combinedPages)"));
   assert.doesNotMatch(page, /await throwIntoHoop/);
+});
+
+test("the hoop layer hands over to the workspace instead of lingering over it", () => {
+  assert.match(hoop, /const handOver = lastNet \+ \d+;/);
+  assert.match(hoop, /delay: handOver/);
+  assert.match(hoop, /setTimeout\(resolve, handOver\)/);
 });
 
 test("people who ask for less motion get no shot", () => {
