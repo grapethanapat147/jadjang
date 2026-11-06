@@ -469,7 +469,12 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailKey]);
 
-  async function addFiles(incoming: File[]) {
+  /**
+   * `onAccepted` runs once the files pass validation and may return a promise
+   * to hold the reveal on: game mode uses it so the workspace replaces the hoop
+   * only after the ball is in. Reading starts immediately either way.
+   */
+  async function addFiles(incoming: File[], onAccepted?: () => Promise<void> | undefined) {
     const candidates: UploadCandidate[] = [
       ...sources.map((source) => ({
         name: source.name,
@@ -488,6 +493,7 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
     // previews, so losing the connection before pressing the button is harmless.
     void import("pdf-lib").catch(() => undefined);
     void import("jszip").catch(() => undefined);
+    const reveal = onAccepted?.();
 
     autoClear.cancel();
     setIsBusy(true);
@@ -551,6 +557,7 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
         }
       }
 
+      if (reveal) await reveal;
       const combinedPages = [...pages, ...newPages];
       setSources((items) => [...items, ...newSources]);
       setPages(combinedPages);
@@ -586,12 +593,14 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
     if (!files.length) return;
-    void addFiles(files);
-    if (gameMode) {
-      // Thrown from the button that opened the picker.
-      const button = hoopRef.current?.parentElement?.querySelector(".primary-button")?.getBoundingClientRect();
-      if (button) throwIntoHoop(hoopRef.current, { x: button.left + button.width / 2, y: button.top + button.height / 2 }, files.map((file) => file.name));
-    }
+    // Thrown from the button that opened the picker.
+    const button = hoopRef.current?.parentElement?.querySelector(".primary-button")?.getBoundingClientRect();
+    void addFiles(
+      files,
+      gameMode && button
+        ? () => throwIntoHoop(hoopRef.current, { x: button.left + button.width / 2, y: button.top + button.height / 2 }, files.map((file) => file.name))
+        : undefined,
+    );
   }
 
   function handleDragEnter(event: DragEvent<HTMLElement>) {
@@ -610,8 +619,8 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
     setIsDragging(false);
     if (isBusy) return;
     const files = Array.from(event.dataTransfer.files);
-    void addFiles(files);
-    if (gameMode) throwIntoHoop(hoopRef.current, { x: event.clientX, y: event.clientY }, files.map((file) => file.name));
+    const from = { x: event.clientX, y: event.clientY };
+    void addFiles(files, gameMode ? () => throwIntoHoop(hoopRef.current, from, files.map((file) => file.name)) : undefined);
   }
 
   function updatePage(id: string, update: Partial<WorkspacePage>) {
