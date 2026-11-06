@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-async function render() {
+async function render(path = "/") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
   return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html", host: "localhost" } }),
+    new Request(`http://localhost${path}`, { headers: { accept: "text/html", host: "localhost" } }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
     { waitUntil() {}, passThroughOnException() {} },
   );
@@ -67,7 +67,8 @@ test("wires the tool tablist to a real tab panel", async () => {
   const html = await (await render()).text();
 
   const tabs = [...html.matchAll(/role="tab"/g)];
-  assert.equal(tabs.length, 5, "one tab per tool");
+  const { TOOLS } = await import("../app/lib/tools.ts");
+  assert.equal(tabs.length, TOOLS.length, "one tab per tool");
 
   const panels = [...html.matchAll(/role="tabpanel"/g)];
   assert.equal(panels.length, 1, "exactly one panel");
@@ -84,7 +85,8 @@ test("exposes a single tab stop so arrow keys own the tablist", async () => {
   const skipped = [...html.matchAll(/role="tab"[^>]*tabindex="-1"/g)];
 
   assert.equal(reachable.length, 1, "only the selected tool is in the tab order");
-  assert.equal(skipped.length, 4, "the rest are reached with arrow keys");
+  const { TOOLS } = await import("../app/lib/tools.ts");
+  assert.equal(skipped.length, TOOLS.length - 1, "the rest are reached with arrow keys");
   assert.match(html, /id="tool-tab-organize"[^>]*aria-selected="true"/);
 });
 
@@ -103,4 +105,32 @@ test("advertises itself as an installable app, from inside <head>", async () => 
 
   const manifestLinks = html.match(/rel="manifest"/g) ?? [];
   assert.equal(manifestLinks.length, 1, "exactly one manifest link");
+});
+
+// ------------------------------------------------------------ tool pages --
+
+test("every tool has its own page, titled with the Thai words people search for", async () => {
+  const { TOOLS } = await import("../app/lib/tools.ts");
+  for (const tool of TOOLS) {
+    const response = await render(`/${tool.slug}`);
+    assert.equal(response.status, 200, `/${tool.slug}`);
+    const html = await response.text();
+    assert.ok(html.includes(`<title>${tool.title} | จัดแจง</title>`), `${tool.slug} title`);
+    assert.match(html, new RegExp(`<h1 id="tools-title">${tool.label}</h1>`), `${tool.slug} heading`);
+    assert.match(html, new RegExp(`id="tool-tab-${tool.id}"[^>]*aria-selected="true"`), `${tool.slug} opens on its tool`);
+    assert.match(html, new RegExp(`<link rel="canonical" href="[^"]*/${tool.slug}"`), `${tool.slug} canonical`);
+  }
+});
+
+test("the home page links to every tool page, so crawlers can follow them", async () => {
+  const { TOOLS } = await import("../app/lib/tools.ts");
+  const html = await (await render()).text();
+  for (const tool of TOOLS) {
+    assert.match(html, new RegExp(`href="/${tool.slug}"`), tool.slug);
+  }
+});
+
+test("an unknown tool address is a 404, not an empty workspace", async () => {
+  const response = await render("/not-a-tool");
+  assert.equal(response.status, 404);
 });

@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { EAGER_PREVIEW_LIMIT } from "../app/lib/preview-state.ts";
 
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
-const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+const page = await readFile(new URL("../app/Workspace.tsx", import.meta.url), "utf8");
 
 function rule(selector) {
   const match = css.match(

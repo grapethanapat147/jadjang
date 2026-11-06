@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
-const page = await read("app/page.tsx");
+const page = await read("app/Workspace.tsx");
 const worker = await read("worker/index.ts");
 const vite = await read("vite.config.ts");
 const guide = await read("CLAUDE.md");

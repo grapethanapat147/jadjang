@@ -10,7 +10,7 @@ import {
   writeGameMode,
 } from "../app/lib/game-mode.ts";
 
-const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+const page = await readFile(new URL("../app/Workspace.tsx", import.meta.url), "utf8");
 const hoop = await readFile(new URL("../app/Hoop.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 

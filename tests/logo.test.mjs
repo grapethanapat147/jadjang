@@ -8,8 +8,9 @@ const readText = (name) => readFile(new URL(`../public/${name}`, import.meta.url
 const iconSvg = await readText("icon.svg");
 const faviconSvg = await readText("favicon.svg");
 const manifest = JSON.parse(await readText("manifest.webmanifest"));
-const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
+const page = await readFile(new URL("../app/Workspace.tsx", import.meta.url), "utf8");
+// The share image is declared once, in the metadata every page is built from.
+const layout = await readFile(new URL("../app/site-metadata.ts", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 
 const BRAND_BLUE = "#4263eb";

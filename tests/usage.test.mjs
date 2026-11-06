@@ -147,3 +147,8 @@ test("a row is exactly the five counted columns", () => {
     ["2026-10-01", "run", "compress", "failure", "101+"],
   );
 });
+
+test("every tool can be counted, and nothing that is not a tool", async () => {
+  const { TOOLS } = await import("../app/lib/tools.ts");
+  assert.deepEqual([...USAGE_TOOLS].sort(), TOOLS.map((tool) => tool.id).sort());
+});

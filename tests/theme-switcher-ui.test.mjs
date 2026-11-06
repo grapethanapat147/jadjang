@@ -6,7 +6,7 @@ import { THEME_CHOICES } from "../app/lib/theme.ts";
 
 const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
 const component = await readFile(new URL("../app/ThemeSwitcher.tsx", import.meta.url), "utf8");
-const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+const page = await readFile(new URL("../app/Workspace.tsx", import.meta.url), "utf8");
 
 function rule(selector) {
   const match = css.match(
