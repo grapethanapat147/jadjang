@@ -171,6 +171,72 @@ export function fitImageOnA4(
   };
 }
 
+/** Clockwise turn per EXIF orientation (index 1–8) that makes a photo look as the browser shows it. */
+const EXIF_TURN = [0, 0, 0, 180, 180, 270, 90, 90, 270];
+/** EXIF orientations that also mirror the photo left to right before the turn. */
+const EXIF_MIRRORED = new Set([2, 4, 5, 7]);
+
+function readExifOrientation(segment: Uint8Array) {
+  // "Exif\0\0", then a TIFF header; orientation is tag 0x0112 in the first IFD.
+  if (segment.length < 14 || String.fromCharCode(...segment.subarray(0, 4)) !== "Exif") return 1;
+  const tiff = new DataView(segment.buffer, segment.byteOffset + 6, segment.length - 6);
+  const littleEndian = tiff.getUint16(0) === 0x4949;
+  const ifd = tiff.getUint32(4, littleEndian);
+  if (ifd + 2 > tiff.byteLength) return 1;
+  for (let index = 0; index < tiff.getUint16(ifd, littleEndian); index += 1) {
+    const entry = ifd + 2 + index * 12;
+    if (entry + 12 > tiff.byteLength) return 1;
+    if (tiff.getUint16(entry, littleEndian) !== 0x0112) continue;
+    const orientation = tiff.getUint16(entry + 8, littleEndian);
+    return orientation >= 1 && orientation <= 8 ? orientation : 1;
+  }
+  return 1;
+}
+
+/**
+ * Drops every APP1–APP15 segment (EXIF with GPS, device and time, XMP, ICC, IPTC…) and comments
+ * from a JPEG, because pdf-lib embeds JPEG bytes as they are. APP0 (JFIF) and APP14 (Adobe, needed
+ * to decode CMYK colour) stay. The orientation tag is read first so the page can still turn the
+ * photo the way the browser showed it.
+ */
+export function stripJpegMetadata(bytes: Uint8Array, name: string) {
+  const unreadable = () => new Error(`อ่านรูป “${name}” ไม่ได้ ไฟล์อาจเสียหายหรือไม่ใช่ JPG ที่สมบูรณ์`);
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) throw unreadable();
+  const kept = [bytes.subarray(0, 2)];
+  let orientation = 1;
+  let offset = 2;
+  for (;;) {
+    while (offset < bytes.length && bytes[offset] !== 0xff) offset += 1;
+    while (bytes[offset + 1] === 0xff) offset += 1;
+    const marker = bytes[offset + 1];
+    if (marker === undefined) throw unreadable();
+    // shortcut: metadata placed after the first scan (non-standard; cameras never do it) is kept as-is.
+    if (marker === 0xda || marker === 0xd9) {
+      kept.push(bytes.subarray(offset));
+      break;
+    }
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      kept.push(bytes.subarray(offset, offset + 2));
+      offset += 2;
+      continue;
+    }
+    const end = offset + 2 + ((bytes[offset + 2] << 8) | bytes[offset + 3]);
+    if (offset + 4 > bytes.length || end < offset + 4 || end > bytes.length) throw unreadable();
+    if (marker === 0xe1 && orientation === 1) orientation = readExifOrientation(bytes.subarray(offset + 4, end));
+    const isMetadata = (marker >= 0xe1 && marker <= 0xef && marker !== 0xee) || marker === 0xfe;
+    if (!isMetadata) kept.push(bytes.subarray(offset, end));
+    offset = end;
+  }
+
+  const stripped = new Uint8Array(kept.reduce((total, part) => total + part.length, 0));
+  let position = 0;
+  for (const part of kept) {
+    stripped.set(part, position);
+    position += part.length;
+  }
+  return { bytes: stripped, orientation };
+}
+
 function normalizeRotation(value: number) {
   const normalized = value % 360;
   return normalized < 0 ? normalized + 360 : normalized;
@@ -199,17 +265,20 @@ async function appendPage(
     return;
   }
 
-  const data = new Uint8Array(source.bytes.slice(0));
-  const image = source.type === "png" ? await output.embedPng(data) : await output.embedJpg(data);
+  // pdf-lib re-encodes PNG pixels (dropping its chunks) but copies JPEG bytes into the PDF.
+  const jpeg = source.type === "jpg" ? stripJpegMetadata(new Uint8Array(source.bytes), source.name) : null;
+  const image = jpeg ? await output.embedJpg(jpeg.bytes) : await output.embedPng(new Uint8Array(source.bytes.slice(0)));
+  const orientation = jpeg?.orientation ?? 1;
+  const mirrored = EXIF_MIRRORED.has(orientation);
   const box = fitImageOnA4(image.width, image.height);
   const imagePage = output.addPage([box.pageWidth, box.pageHeight]);
   imagePage.drawImage(image, {
-    x: box.x,
+    x: mirrored ? box.x + box.drawWidth : box.x,
     y: box.y,
-    width: box.drawWidth,
+    width: mirrored ? -box.drawWidth : box.drawWidth,
     height: box.drawHeight,
   });
-  imagePage.setRotation(degrees(normalizeRotation(page.rotation)));
+  imagePage.setRotation(degrees(normalizeRotation(page.rotation + EXIF_TURN[orientation])));
 }
 
 export async function buildPdf(sources: SourceRecord[], pages: PageRecord[]) {

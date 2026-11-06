@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PDFDocument } from "pdf-lib";
+import { PDFArray, PDFDocument, decodePDFRawStream } from "pdf-lib";
 import {
   A4_LONG_EDGE,
   A4_SHORT_EDGE,
@@ -14,6 +14,7 @@ import {
   movePage,
   splitEntryName,
   splitPdfPages,
+  stripJpegMetadata,
   validateInputFiles,
   verifyPdfPageCount,
 } from "../app/lib/pdf-engine.ts";
@@ -32,6 +33,63 @@ function pngSource() {
     size: buffer.byteLength,
     pageCount: 1,
   };
+}
+
+// A real 3x2 baseline JPEG (macOS sips) with its metadata removed; tests add their own EXIF.
+const CLEAN_JPEG = Buffer.from(
+  "/9j/4AAQSkZJRgABAQAASABIAAD/wAARCAACAAMDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QA" +
+  "tRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6" +
+  "Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJ" +
+  "ytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQD" +
+  "BAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElK" +
+  "U1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX" +
+  "2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9sAQwACAgICAgIDAgIDBAMDAwQFBAQEBAUHBQUFBQUHCAcHBwcHBwgICAgICAgICgoKCgoK" +
+  "CwsLCwsNDQ0NDQ0NDQ0N/9sAQwECAgIDAwMGAwMGDQkHCQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0N" +
+  "DQ0NDQ0NDQ0N/90ABAAB/9oADAMBAAIRAxEAPwD8x/jR/wAj/P8A9g3Rf/TZa15XXqnxo/5H+f8A7Bui/wDpsta8rr/Z36Pf/JrO" +
+  "Gv8AsAwn/qPTPzvNf99rf4pfmz//2Q==",
+  "base64",
+);
+
+/** The JPEG with an APP1 EXIF segment after SOI, as a phone writes it: device name plus orientation. */
+function withExif(jpeg, orientation) {
+  const make = Buffer.from("SECRET-PHONE\0", "latin1");
+  const ifd = Buffer.alloc(2 + 2 * 12 + 4);
+  ifd.writeUInt16BE(2, 0);
+  ifd.writeUInt16BE(0x010f, 2); // Make, ASCII, stored after the IFD
+  ifd.writeUInt16BE(2, 4);
+  ifd.writeUInt32BE(make.length, 6);
+  ifd.writeUInt32BE(8 + ifd.length, 10);
+  ifd.writeUInt16BE(0x0112, 14); // Orientation, SHORT
+  ifd.writeUInt16BE(3, 16);
+  ifd.writeUInt32BE(1, 18);
+  ifd.writeUInt16BE(orientation, 22);
+  const payload = Buffer.concat([Buffer.from("Exif\0\0", "latin1"), Buffer.from([0x4d, 0x4d, 0, 0x2a, 0, 0, 0, 8]), ifd, make]);
+  const header = Buffer.alloc(4);
+  header.writeUInt16BE(0xffe1, 0);
+  header.writeUInt16BE(payload.length + 2, 2);
+  return Buffer.concat([jpeg.subarray(0, 2), header, payload, jpeg.subarray(2)]);
+}
+
+function jpgSource(buffer) {
+  return {
+    id: "photo",
+    name: "photo.jpg",
+    type: "jpg",
+    bytes: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
+    size: buffer.byteLength,
+    pageCount: 1,
+  };
+}
+
+async function buildPhotoPage(buffer, rotation = 0) {
+  const output = await buildPdf([jpgSource(buffer)], [{ id: "p1", sourceId: "photo", pageNumber: 1, rotation }]);
+  return { output, page: (await PDFDocument.load(output)).getPage(0) };
+}
+
+function pageOperators(page) {
+  const contents = page.node.Contents();
+  const streams = contents instanceof PDFArray ? contents.asArray().map((ref) => page.doc.context.lookup(ref)) : [contents];
+  return streams.map((stream) => Buffer.from(decodePDFRawStream(stream).decode()).toString("latin1")).join("\n");
 }
 
 async function samplePdf(pageCount) {
@@ -226,4 +284,41 @@ test("knows when the workspace still holds every page that was read", () => {
   assert.equal(hasEveryPage(sources, allPages), true);
   assert.equal(hasEveryPage(sources, allPages.slice(1)), false, "a deleted page breaks the comparison");
   assert.equal(hasEveryPage([], []), true);
+});
+
+test("strips EXIF from a JPEG and keeps the image bytes", () => {
+  const photo = withExif(CLEAN_JPEG, 6);
+  assert.ok(photo.includes("SECRET-PHONE"));
+  const stripped = stripJpegMetadata(new Uint8Array(photo), "photo.jpg");
+  assert.equal(stripped.orientation, 6);
+  assert.deepEqual(Buffer.from(stripped.bytes), CLEAN_JPEG);
+});
+
+test("builds a photo PDF without the photo's EXIF, on the same page", async () => {
+  const { output, page } = await buildPhotoPage(withExif(CLEAN_JPEG, 1));
+  const pdf = Buffer.from(output);
+  assert.ok(!pdf.includes("SECRET-PHONE"));
+  assert.ok(!pdf.includes("Exif"));
+  assert.equal((await PDFDocument.load(output)).getPageCount(), 1);
+  const plain = await buildPhotoPage(CLEAN_JPEG);
+  assert.deepEqual(page.getSize(), plain.page.getSize());
+  assert.deepEqual(page.getSize(), { width: A4_LONG_EDGE, height: A4_SHORT_EDGE });
+  assert.equal(page.getRotation().angle, 0);
+});
+
+test("turns the page the way the EXIF orientation showed the photo", async () => {
+  assert.equal((await buildPhotoPage(withExif(CLEAN_JPEG, 6))).page.getRotation().angle, 90);
+  assert.equal((await buildPhotoPage(withExif(CLEAN_JPEG, 8), 90)).page.getRotation().angle, 0);
+  assert.equal((await buildPhotoPage(withExif(CLEAN_JPEG, 3))).page.getRotation().angle, 180);
+});
+
+test("mirrors a photo whose EXIF orientation is mirrored", async () => {
+  const mirrored = await buildPhotoPage(withExif(CLEAN_JPEG, 2));
+  assert.match(pageOperators(mirrored.page), /^-[\d.]+ 0 0 [\d.]+ 0 0 cm$/m);
+  assert.doesNotMatch(pageOperators((await buildPhotoPage(CLEAN_JPEG)).page), /^-[\d.]+ 0 0/m);
+});
+
+test("refuses a damaged JPEG with a Thai message", () => {
+  assert.throws(() => stripJpegMetadata(new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0x40, 0x00]), "broken.jpg"), /อ่านรูป “broken.jpg” ไม่ได้/);
+  assert.throws(() => stripJpegMetadata(new Uint8Array([0x89, 0x50]), "fake.jpg"), /ไม่ใช่ JPG/);
 });
