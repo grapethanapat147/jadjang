@@ -59,4 +59,4 @@ export const THEMES = [
 ];
 
 /** Tool ids as the stylesheet names them. */
-export const TOOLS = ["organize", "merge", "split", "compress", "convert"];
+export const TOOLS = ["organize", "merge", "split", "compress", "convert", "annotate", "layout", "privacy"];

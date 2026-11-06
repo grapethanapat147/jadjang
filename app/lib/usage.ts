@@ -7,7 +7,11 @@
  * server adds the day and nothing finer, and keeps only running totals.
  */
 
-export const USAGE_TOOLS = ["organize", "merge", "split", "compress", "convert"] as const;
+/** One entry per tool in app/lib/tools.ts — values of the approved `tool` field, not new fields. */
+export const USAGE_TOOLS = [
+  "organize", "merge", "split", "compress", "convert",
+  "page-numbers", "watermark", "sign", "redact", "strip-metadata", "resize-a4", "n-up", "image-compress",
+] as const;
 export type UsageTool = (typeof USAGE_TOOLS)[number];
 
 export const USAGE_OUTCOMES = ["success", "failure"] as const;

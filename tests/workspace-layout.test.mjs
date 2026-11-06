@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
-const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+const page = await readFile(new URL("../app/Workspace.tsx", import.meta.url), "utf8");
 
 /** Spacing tokens, so the test measures what the stylesheet actually says. */
 const space = Object.fromEntries(
@@ -126,7 +126,7 @@ test("the settings panel no longer has a 660px floor", () => {
 test("the large preview column is gone from the stylesheet and the markup", () => {
   for (const name of ["preview-layout", "main-preview", "paper-preview", "preview-placeholder"]) {
     assert.ok(!css.includes(name), `.${name} is still in globals.css`);
-    assert.ok(!page.includes(name), `${name} is still in page.tsx`);
+    assert.ok(!page.includes(name), `${name} is still in Workspace.tsx`);
   }
 });
 

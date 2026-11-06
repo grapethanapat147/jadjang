@@ -11,7 +11,7 @@
  * demonstrates that rather than asserting it.
  */
 
-const CACHE = "jadjang-v2";
+const CACHE = "jadjang-v3";
 
 const PRECACHE = [
   "/",
@@ -25,6 +25,14 @@ const PRECACHE = [
   "/tool-icons/split.png",
   "/tool-icons/compress.png",
   "/tool-icons/convert.png",
+  "/tool-icons/page-numbers.svg",
+  "/tool-icons/watermark.svg",
+  "/tool-icons/sign.svg",
+  "/tool-icons/redact.svg",
+  "/tool-icons/strip-metadata.svg",
+  "/tool-icons/resize-a4.svg",
+  "/tool-icons/n-up.svg",
+  "/tool-icons/image-compress.svg",
 ];
 
 /**

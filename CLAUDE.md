@@ -7,7 +7,11 @@
 1. A colorful PDF tool picker.
 2. A Quick Preview workspace following Upload → Process → Download.
 
-Supported MVP workflows are page organization, PDF merging, page splitting, compression, and PDF/image conversion. Keep the experience friendly, readable, mobile-first, and suitable for nontechnical Thai users.
+Tools live in one registry, `app/lib/tools.ts` (13 as of 2026-11-06): organize, merge, split, compress,
+convert, plus page numbers, watermark, signature, redaction, metadata removal, A4 resizing, pages per
+sheet and photo shrinking. Each has its own page at `/{slug}` (`app/[tool]/page.tsx`) rendering the same
+`Workspace` — tool pages exist so a search for one job lands on it, not to add marketing content.
+Keep the experience friendly, readable, mobile-first, and suitable for nontechnical Thai users.
 
 ## Non-negotiable requirements
 
@@ -22,7 +26,10 @@ Supported MVP workflows are page organization, PDF merging, page splitting, comp
 ## Architecture
 
 - Runtime: React 19 with Next-style App Router APIs compiled by `vinext` for Cloudflare Workers.
-- Main UI and browser workflow: `app/page.tsx`.
+- Main UI and browser workflow: `app/Workspace.tsx` (rendered by `app/page.tsx` and `app/[tool]/page.tsx`).
+- PDF operations of the newer tools: `app/lib/pdf-tools.ts` (testable in Node); their canvas half
+  (Thai text, signatures, photos, redaction): `app/lib/canvas-tools.ts`. Thai text goes into a PDF only
+  as an image drawn on a canvas — pdf-lib's standard fonts cannot shape Thai.
 - Global design system and motion: `app/globals.css`.
 - Testable PDF operations and guardrails: `app/lib/pdf-engine.ts`.
 - Site metadata and Anuphan font: `app/layout.tsx`.
