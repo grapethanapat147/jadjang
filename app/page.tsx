@@ -51,6 +51,18 @@ import {
 import { canvasToBlob, createPageRenderer } from "./lib/page-renderer";
 import { isLeavingDropTarget } from "./lib/drag-and-drop";
 import { ThemeSwitcher } from "./ThemeSwitcher";
+import { INSTALL_DISMISSED_KEY, installHint, isIosBrowser } from "./lib/install-hint";
+
+/** Chromium's install prompt; not in the DOM typings yet. */
+type InstallPromptEvent = Event & { prompt(): Promise<void> };
+
+function readInstallDismissed(): boolean {
+  try {
+    return localStorage.getItem(INSTALL_DISMISSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 type ToolId = "organize" | "merge" | "split" | "compress" | "convert";
 
@@ -121,6 +133,8 @@ export default function Home() {
   const [progress, setProgress] = useState<ProgressState | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
+  const [installDismissed, setInstallDismissed] = useState(false);
 
   const workspaceRef = useRef<HTMLElement | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
@@ -184,6 +198,21 @@ export default function Home() {
       if (resultUrl.current) URL.revokeObjectURL(resultUrl.current);
     };
   }, [autoClear, renderer, detailQueue]);
+
+  useEffect(() => {
+    // Held back so the offer comes after a file has come out right, not on arrival.
+    const onPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as InstallPromptEvent);
+    };
+    const onInstalled = () => setInstallPrompt(null);
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
 
   useEffect(() => {
     // Dev is served unhashed and hot-reloaded, so caching it would fight HMR.
@@ -338,6 +367,11 @@ export default function Home() {
       setError(validationError);
       return;
     }
+
+    // Fetch the processing code while the user is still online and looking at
+    // previews, so losing the connection before pressing the button is harmless.
+    void import("pdf-lib").catch(() => undefined);
+    void import("jszip").catch(() => undefined);
 
     autoClear.cancel();
     setIsBusy(true);
@@ -611,6 +645,35 @@ export default function Home() {
     }
   }
 
+  async function installApp() {
+    const prompt = installPrompt;
+    if (!prompt) return;
+    // A prompt can only be shown once.
+    setInstallPrompt(null);
+    await prompt.prompt().catch(() => undefined);
+  }
+
+  function dismissInstall() {
+    setInstallDismissed(true);
+    try {
+      localStorage.setItem(INSTALL_DISMISSED_KEY, "1");
+    } catch {
+      // Blocked storage: it stays dismissed for this visit, which is enough.
+    }
+  }
+
+  // Only read once a result exists, which never happens during server render.
+  const install = result
+    ? installHint({
+        standalone:
+          window.matchMedia("(display-mode: standalone)").matches ||
+          (navigator as Navigator & { standalone?: boolean }).standalone === true,
+        canPrompt: installPrompt !== null,
+        iosBrowser: isIosBrowser(navigator.userAgent, navigator.maxTouchPoints),
+        dismissed: installDismissed || readInstallDismissed(),
+      })
+    : "none";
+
   function selectTool(toolId: ToolId, options?: { revealWorkspace?: boolean }) {
     setActiveTool(toolId);
     setResult(null);
@@ -757,11 +820,11 @@ export default function Home() {
                 <li><span className="step-number">02</span><div><strong>ตรวจและจัดการ</strong><p>ดูหน้าเอกสารและตั้งค่าเครื่องมือที่เลือก</p></div></li>
                 <li><span className="step-number">03</span><div><strong>ดาวน์โหลด</strong><p>ตรวจผลลัพธ์อัตโนมัติก่อนดาวน์โหลด</p></div></li>
               </ol>
-              <p className="flow-privacy"><span className="status-dot" />ทำงานบนอุปกรณ์ของคุณ</p>
+              <p className="flow-privacy"><span className="status-dot" />ทำงานบนอุปกรณ์ของคุณ · เพิ่มไฟล์แล้วปิด Wi‑Fi ก็ยังทำต่อได้</p>
             </div>
             <div className="upload-card">
               <label className={`drop-zone ${isDragging ? "dragging" : ""}`} htmlFor="pdf-upload">
-                <span className="upload-symbol">＋</span><strong>วาง PDF หรือรูปที่นี่</strong><span>รองรับ PDF, JPG และ PNG · สูงสุด 150 MB ต่อครั้ง</span><span className="primary-button">เลือกไฟล์</span>
+                <span className="upload-symbol">＋</span><strong>วาง PDF หรือรูปที่นี่</strong><span>รองรับ PDF, JPG และ PNG · สูงสุด 150 MB ต่อครั้ง</span><span>ไม่ต้องสมัคร · ไม่มีลายน้ำ · ใช้ได้ไม่จำกัดครั้ง</span><span className="primary-button">เลือกไฟล์</span>
                 <input id="pdf-upload" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png" multiple onChange={handleInput} disabled={isBusy} />
               </label>
             </div>
@@ -951,6 +1014,19 @@ export default function Home() {
             <a className="download-button" href={result.url} download={result.name} onClick={() => autoClear.schedule(() => void clearWorkspace())}>ดาวน์โหลดไฟล์ <span>↓</span></a>
             <button type="button" className="delete-now" onClick={() => void clearWorkspace()}>ดาวน์โหลดแล้ว ล้างไฟล์ทันที</button>
             <small className="auto-clear-note">ระบบจะล้างพื้นที่ทำงานอัตโนมัติภายใน {AUTO_CLEAR_DELAY_SECONDS} วินาทีหลังเริ่มดาวน์โหลด</small>
+            {install !== "none" && (
+              <div className="install-hint">
+                <p>
+                  {install === "prompt"
+                    ? "ใช้บ่อยไหม? ติดตั้งจัดแจงไว้บนหน้าจอโฮม เปิดได้ในแตะเดียว"
+                    : "ใช้บ่อยไหม? กดปุ่มแชร์ แล้วเลือก “เพิ่มไปยังหน้าจอโฮม”"}
+                </p>
+                {install === "prompt" && (
+                  <button type="button" className="install-button" onClick={() => void installApp()}>ติดตั้ง</button>
+                )}
+                <button type="button" className="install-dismiss" onClick={dismissInstall}>ไม่ต้อง</button>
+              </div>
+            )}
           </div>
         )}
       </section>

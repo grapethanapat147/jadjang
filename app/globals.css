@@ -334,6 +334,8 @@ img { max-width: 100%; }
 .clear-button:focus-visible,
 .delete-now:focus-visible,
 .download-button:focus-visible,
+.install-button:focus-visible,
+.install-dismiss:focus-visible,
 .theme-option:focus-visible,
 .detail-close:focus-visible,
 .detail-previous:focus-visible,
@@ -545,6 +547,11 @@ img { max-width: 100%; }
 .download-button { grid-row: span 2; min-height: 50px; border-radius: var(--radius-md); background: var(--green); color: var(--on-accent); padding: var(--space-sm) var(--space-lg); display: flex; align-items: center; gap: var(--space-lg); font-size: var(--type-meta); font-weight: 700; }
 .download-button span { font-size: var(--type-action); }
 .delete-now { grid-column: 2; justify-self: start; border: 0; border-bottom: 1px solid currentColor; background: transparent; padding: 0; color: var(--text-secondary); font-size: var(--type-meta); cursor: pointer; }
+/* Full width under the result, so it reads as an aside to the download. */
+.install-hint { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs) var(--space-sm); margin-top: var(--space-xs); padding-top: var(--space-sm); border-top: 1px solid var(--success-border); }
+.install-hint p { flex: 1 1 220px; margin: 0; color: var(--text-secondary); font-size: var(--type-meta); line-height: var(--type-meta-leading); }
+.install-button { min-height: var(--size-touch-min); padding: 0 var(--space-lg); border: 0; border-radius: var(--radius-md); background: var(--blue); color: var(--on-accent); font-size: var(--type-control); font-weight: 700; cursor: pointer; }
+.install-dismiss { min-height: var(--size-touch-min); padding: 0 var(--space-sm); border: 0; background: transparent; color: var(--text-secondary); font-size: var(--type-meta); text-decoration: underline; cursor: pointer; }
 .auto-clear-note { grid-column: 2; color: var(--text-secondary); font-size: var(--type-meta); }
 
 /* Detail overlay. A document stage is dark in both themes, so it adopts the

@@ -111,6 +111,7 @@ test("every control that can take focus shows the ring", () => {
     ".page-controls button", ".clear-button", ".delete-now", ".download-button",
     ".notice button", ".selection-summary button",
     ".detail-close", ".detail-previous", ".detail-next",
+    ".install-button", ".install-dismiss",
     ".page-card-top input", ".option-group input",
   ]) {
     assert.ok(css.includes(`${selector}:focus-visible`), `${selector} has no focus ring`);
