@@ -1,5 +1,5 @@
 import { SignaturePad } from "./SignaturePad";
-import { IMAGE_COMPRESSION, type ImageCompressionLevel, type PngStamp } from "./lib/canvas-tools";
+import { ID_PURPOSE_MAX_LENGTH, IMAGE_COMPRESSION, idCopyLines, type ImageCompressionLevel, type PngStamp } from "./lib/canvas-tools";
 import type { MetadataEntry, NumberFormat, NumberPosition } from "./lib/pdf-tools";
 import type { ToolId } from "./lib/tools";
 
@@ -9,8 +9,10 @@ export type SignCorner = "bottom-left" | "bottom-center" | "bottom-right";
 export type ToolOptions = {
   numberPosition: NumberPosition;
   numberFormat: NumberFormat;
-  watermarkKind: "text" | "image";
+  watermarkKind: "id-copy" | "text" | "image";
   watermarkText: string;
+  /** What an ID card copy may be used for, written across it. */
+  idPurpose: string;
   watermarkPlacement: "diagonal" | "corner";
   /** 1-based; null means the last page, which is where most forms are signed. */
   signPage: number | null;
@@ -23,8 +25,9 @@ export type ToolOptions = {
 export const DEFAULT_TOOL_OPTIONS: ToolOptions = {
   numberPosition: "bottom-center",
   numberFormat: "plain",
-  watermarkKind: "text",
+  watermarkKind: "id-copy",
   watermarkText: "สำเนาถูกต้อง",
+  idPurpose: "",
   watermarkPlacement: "diagonal",
   signPage: null,
   signCorner: "bottom-right",
@@ -96,8 +99,26 @@ export function ToolSettings(props: {
     return (
       <>
         <Choices name="watermark-kind" legend="ลายน้ำแบบ" inline value={options.watermarkKind} onChange={(value) => setOption("watermarkKind", value)}
-          choices={[{ value: "text", label: "ข้อความ" }, { value: "image", label: "โลโก้ / รูป" }]} />
-        {options.watermarkKind === "text" ? (
+          choices={[{ value: "id-copy", label: "สำเนาบัตร" }, { value: "text", label: "ข้อความ" }, { value: "image", label: "โลโก้" }]} />
+        {options.watermarkKind === "id-copy" ? (
+          <>
+            <label className="option-field">
+              <span>สำเนานี้ใช้สำหรับ</span>
+              <input
+                type="text"
+                value={options.idPurpose}
+                maxLength={ID_PURPOSE_MAX_LENGTH}
+                placeholder="เช่น เปิดบัญชีธนาคาร ABC"
+                onChange={(event) => setOption("idPurpose", event.target.value)}
+              />
+              <small>ระบุให้ชัดว่าใช้ที่ไหน ถ้าสำเนาหลุดไป คนอื่นจะเอาไปใช้ที่อื่นได้ยากขึ้น</small>
+            </label>
+            <div className="id-copy-preview" aria-live="polite">
+              <span>ข้อความที่จะเขียนทับเอกสาร</span>
+              {(idCopyLines(options.idPurpose, new Date()) ?? ["สำเนาถูกต้อง", "ใช้สำหรับ ______ เท่านั้น", "วันที่ (วันนี้)"]).map((line) => <strong key={line}>{line}</strong>)}
+            </div>
+          </>
+        ) : options.watermarkKind === "text" ? (
           <label className="option-field">
             <span>ข้อความลายน้ำ</span>
             <input type="text" value={options.watermarkText} maxLength={WATERMARK_MAX_LENGTH} onChange={(event) => setOption("watermarkText", event.target.value)} />
@@ -115,8 +136,10 @@ export function ToolSettings(props: {
             </label>
           </div>
         )}
-        <Choices name="watermark-placement" legend="ตำแหน่ง" value={options.watermarkPlacement} onChange={(value) => setOption("watermarkPlacement", value)}
-          choices={[{ value: "diagonal", label: "กลางหน้า แนวเฉียง", hint: "จางลง อ่านเอกสารได้ตามปกติ" }, { value: "corner", label: "มุมขวาล่าง", hint: "เล็กและชัด เหมาะกับโลโก้" }]} />
+        {options.watermarkKind !== "id-copy" && (
+          <Choices name="watermark-placement" legend="ตำแหน่ง" value={options.watermarkPlacement} onChange={(value) => setOption("watermarkPlacement", value)}
+            choices={[{ value: "diagonal", label: "กลางหน้า แนวเฉียง", hint: "จางลง อ่านเอกสารได้ตามปกติ" }, { value: "corner", label: "มุมขวาล่าง", hint: "เล็กและชัด เหมาะกับโลโก้" }]} />
+        )}
       </>
     );
   }
