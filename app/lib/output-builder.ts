@@ -86,6 +86,99 @@ export async function buildCompressedPdf<TCanvas>(
   return output.save({ useObjectStreams: true });
 }
 
+// ------------------------------------------------------- compress to a size --
+
+const MB = 1024 * 1024;
+
+/** Upload limits Thai forms actually set: TCAS asks for 2 MB, many others go lower. */
+export const TARGET_SIZES = [
+  { bytes: 2 * MB, label: "2 MB" },
+  { bytes: 1 * MB, label: "1 MB" },
+  { bytes: 500 * 1024, label: "500 KB" },
+] as const;
+
+/** Tried from sharpest to smallest; each scale is rendered once and encoded at every quality. */
+const TARGET_SCALES = [1.35, 1.05, 0.8, 0.6];
+const TARGET_QUALITIES = [0.78, 0.62, 0.48, 0.35];
+
+export type TargetResult = { bytes: Uint8Array; reached: boolean; scale: number; quality: number };
+
+async function assemblePdf(images: Blob[], boxes: PageBox[]): Promise<Uint8Array> {
+  const { PDFDocument } = await import("pdf-lib");
+  const output = await PDFDocument.create();
+  for (let index = 0; index < images.length; index += 1) {
+    const image = await output.embedJpg(await images[index].arrayBuffer());
+    const box = boxes[index];
+    output.addPage([box.pageWidth, box.pageHeight]).drawImage(image, { x: box.x, y: box.y, width: box.drawWidth, height: box.drawHeight });
+  }
+  output.setTitle("จัดแจง — ไฟล์บีบอัด");
+  output.setProducer("จัดแจง");
+  return output.save({ useObjectStreams: true });
+}
+
+/**
+ * The sharpest result that fits under `targetBytes`. Rendering is the slow
+ * part, so each scale is rendered once and encoded at every quality, and the
+ * PDF is only assembled for a quality whose images already fit. If nothing
+ * fits, the smallest attempt comes back with `reached: false` so the caller
+ * can say so instead of pretending.
+ */
+export async function buildPdfUnderSize<TCanvas>(
+  pages: PageRecord[],
+  targetBytes: number,
+  deps: OutputBuilderDeps<TCanvas>,
+): Promise<TargetResult> {
+  if (!pages.length) {
+    throw new Error(EMPTY_DOCUMENT_MESSAGE);
+  }
+
+  let smallest: { images: Blob[]; boxes: PageBox[]; scale: number } | null = null;
+  for (let round = 0; round < TARGET_SCALES.length; round += 1) {
+    const scale = TARGET_SCALES[round];
+    const encoded: Blob[][] = TARGET_QUALITIES.map(() => []);
+    const boxes: PageBox[] = [];
+    for (let index = 0; index < pages.length; index += 1) {
+      const { canvas, pageBox } = await deps.renderPage(pages[index], scale);
+      boxes.push(pageBox);
+      for (let level = 0; level < TARGET_QUALITIES.length; level += 1) {
+        encoded[level].push(await deps.encode(canvas, "image/jpeg", TARGET_QUALITIES[level]));
+      }
+      deps.reportProgress?.(
+        `กำลังหาความคมชัดที่ได้ขนาดพอดี · รอบ ${round + 1} หน้า ${index + 1}/${pages.length}`,
+        Math.round(((round + (index + 1) / pages.length) / TARGET_SCALES.length) * 88),
+      );
+      if (index % YIELD_EVERY_PAGES === 0) {
+        await deps.yieldControl?.();
+      }
+    }
+
+    for (let level = 0; level < TARGET_QUALITIES.length; level += 1) {
+      const imageBytes = encoded[level].reduce((sum, blob) => sum + blob.size, 0);
+      if (imageBytes > targetBytes) continue;
+      const bytes = await assemblePdf(encoded[level], boxes);
+      if (bytes.length <= targetBytes) {
+        return { bytes, reached: true, scale, quality: TARGET_QUALITIES[level] };
+      }
+    }
+    smallest = { images: encoded[TARGET_QUALITIES.length - 1], boxes, scale };
+  }
+
+  const bytes = await assemblePdf(smallest!.images, smallest!.boxes);
+  return { bytes, reached: false, scale: smallest!.scale, quality: TARGET_QUALITIES[TARGET_QUALITIES.length - 1] };
+}
+
+/** Wording for a size-targeted result, including when the target could not be met. */
+export function targetNote(options: { outputBytes: number; targetLabel: string; pageCount: number; reached: boolean; kept: boolean }): string {
+  const { outputBytes, targetLabel, pageCount, reached, kept } = options;
+  if (kept) {
+    return `ไฟล์เดิม ${formatBytes(outputBytes)} ไม่เกิน ${targetLabel} อยู่แล้ว จึงไม่ลดความคมชัด และข้อความยังค้นหาได้ · ตรวจครบ ${pageCount} หน้า`;
+  }
+  if (!reached) {
+    return `เล็กสุดที่ทำได้คือ ${formatBytes(outputBytes)} ยังเกิน ${targetLabel} ลองแบ่งไฟล์ด้วย “แยกหน้า PDF” แล้วส่งทีละส่วน`;
+  }
+  return `ได้ ${formatBytes(outputBytes)} ไม่เกิน ${targetLabel} · ตรวจครบ ${pageCount} หน้า · แต่ละหน้าเป็นภาพ จึงค้นหาข้อความไม่ได้`;
+}
+
 export async function buildImageArchive<TCanvas>(
   pages: PageRecord[],
   format: ImageFormat,

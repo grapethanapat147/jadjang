@@ -55,6 +55,30 @@ export const IMAGE_COMPRESSION: Record<ImageCompressionLevel, { maxEdge: number;
   quality: { maxEdge: 2560, quality: 0.85, label: "คมชัด", hint: "ด้านยาว 2560 px เหมาะกับรูปที่ต้องพิมพ์" },
 };
 
+export const ID_PURPOSE_MAX_LENGTH = 40;
+
+/** A date as Thais write it on documents: 12 พ.ย. 2569. */
+export function thaiDate(date: Date): string {
+  return new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", year: "numeric" }).format(date);
+}
+
+/**
+ * What banks advise writing across an ID card copy: that it is a true copy,
+ * what it may be used for, and when — so a leaked copy is hard to reuse
+ * anywhere else. Returns null until a purpose is given.
+ */
+export function idCopyLines(purpose: string, today: Date): string[] | null {
+  const cleaned = purpose
+    .trim()
+    .replace(/^ใช้สำหรับ\s*/, "")
+    .replace(/\s*เท่านั้น$/, "")
+    .slice(0, ID_PURPOSE_MAX_LENGTH);
+  if (!cleaned) return null;
+  // Thai runs on without spaces, but a purpose ending in a Latin name or number needs one before เท่านั้น.
+  const gap = /[\u0E00-\u0E7F]$/.test(cleaned) ? "" : " ";
+  return ["สำเนาถูกต้อง", `ใช้สำหรับ${cleaned}${gap}เท่านั้น`, `วันที่ ${thaiDate(today)}`];
+}
+
 /** Honest wording for a batch of shrunk photos, in the spirit of compressionNote. */
 export function photoNote(inputBytes: number, outputBytes: number, count: number, comparable: boolean): string {
   const checked = `ตรวจครบ ${count} รูป และลบข้อมูลตำแหน่งแล้ว`;
@@ -90,27 +114,34 @@ async function pngOf(canvas: HTMLCanvasElement): Promise<PngStamp> {
 
 const STAMP_FONT = '"Anuphan Variable", "Anuphan", "Noto Sans Thai", sans-serif';
 
-/** Thai text as a transparent PNG, drawn large so it stays sharp when scaled onto a page. */
-export async function renderTextStamp(text: string, color: string): Promise<PngStamp> {
+/**
+ * Thai text as a transparent PNG, drawn large so it stays sharp when scaled
+ * onto a page. Several lines are centred under one another.
+ */
+export async function renderTextStamp(text: string | string[], color: string): Promise<PngStamp> {
+  const lines = (Array.isArray(text) ? text : [text]).filter((line) => line.trim() !== "");
   const size = 160;
   const font = `700 ${size}px ${STAMP_FONT}`;
   // Without waiting, the first stamp of a visit can be drawn in a fallback font.
-  await document.fonts?.load(font, text).catch(() => undefined);
+  await document.fonts?.load(font, lines.join(" ")).catch(() => undefined);
   const measure = canvasOf(1, 1).context;
   measure.font = font;
-  const metrics = measure.measureText(text);
+  const metrics = lines.map((line) => measure.measureText(line));
   const padding = size * 0.25;
   // Thai stacks marks above and below the line, so the box comes from the glyphs, not the font size.
-  const ascent = Math.max(metrics.actualBoundingBoxAscent || size * 0.8, size * 0.8);
-  const descent = Math.max(metrics.actualBoundingBoxDescent || size * 0.3, size * 0.3);
+  const ascent = Math.max(size * 0.8, ...metrics.map((metric) => metric.actualBoundingBoxAscent || 0));
+  const descent = Math.max(size * 0.3, ...metrics.map((metric) => metric.actualBoundingBoxDescent || 0));
+  const lineHeight = ascent + descent + size * 0.12;
+  const width = Math.max(...metrics.map((metric) => metric.width));
   const { canvas, context } = canvasOf(
-    Math.ceil(metrics.width + padding * 2),
-    Math.ceil(ascent + descent + padding * 2),
+    Math.ceil(width + padding * 2),
+    Math.ceil(lineHeight * lines.length - size * 0.12 + padding * 2),
   );
   context.font = font;
   context.fillStyle = color;
   context.textBaseline = "alphabetic";
-  context.fillText(text, padding, padding + ascent);
+  context.textAlign = "center";
+  lines.forEach((line, index) => context.fillText(line, canvas.width / 2, padding + ascent + index * lineHeight));
   return pngOf(canvas);
 }
 

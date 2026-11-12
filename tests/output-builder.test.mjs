@@ -251,3 +251,60 @@ test("never rounds a real saving down to nothing, and never divides by zero", ()
     /%|NaN|Infinity/,
   );
 });
+
+// ------------------------------------------------------- compress to a size --
+
+import { TARGET_SIZES, buildPdfUnderSize, targetNote } from "../app/lib/output-builder.ts";
+
+/** Encoded size grows with scale and quality, the way real JPEGs do. */
+function sizedDeps(bytesPerUnit) {
+  const renders = [];
+  return {
+    renders,
+    deps: {
+      renderPage: async (page, scale) => {
+        renders.push({ id: page.id, scale });
+        return { canvas: { scale }, pageBox: A4_BOX };
+      },
+      encode: async (canvas, mimeType, quality) =>
+        new Blob([ONE_PIXEL_JPEG, new Uint8Array(Math.round(bytesPerUnit * canvas.scale * quality))]),
+    },
+  };
+}
+
+test("a size target keeps the sharpest result that fits", async () => {
+  const { deps, renders } = sizedDeps(100_000);
+  // Two pages: 1.35 × 0.78 is about 105 KB each, too big; 1.35 × 0.62 is about 84 KB each, fits under 200 KB.
+  const result = await buildPdfUnderSize(makePages(2), 200 * 1024, deps);
+  assert.equal(result.reached, true);
+  assert.equal(result.scale, 1.35);
+  assert.equal(result.quality, 0.62);
+  assert.ok(result.bytes.length <= 200 * 1024);
+  assert.equal((await PDFDocument.load(result.bytes)).getPageCount(), 2);
+  // Each page is rendered once at the first scale; qualities reuse that render.
+  assert.deepEqual(renders.map((call) => call.scale), [1.35, 1.35]);
+});
+
+test("a tight target steps down the scale before giving up", async () => {
+  const { deps, renders } = sizedDeps(100_000);
+  const result = await buildPdfUnderSize(makePages(1), 30 * 1024, deps);
+  assert.equal(result.reached, true);
+  assert.ok(result.scale < 1.35);
+  assert.ok(result.bytes.length <= 30 * 1024);
+  assert.ok(renders.length > 1);
+});
+
+test("an impossible target returns the smallest attempt, marked as not reached", async () => {
+  const { deps } = sizedDeps(10_000_000);
+  const result = await buildPdfUnderSize(makePages(1), 100 * 1024, deps);
+  assert.equal(result.reached, false);
+  assert.equal(result.scale, 0.6);
+  assert.equal(result.quality, 0.35);
+});
+
+test("the size note is honest about each outcome", () => {
+  assert.match(targetNote({ outputBytes: 900_000, targetLabel: "2 MB", pageCount: 3, reached: true, kept: true }), /ไม่เกิน 2 MB อยู่แล้ว.*ข้อความยังค้นหาได้/);
+  assert.match(targetNote({ outputBytes: 1_900_000, targetLabel: "2 MB", pageCount: 3, reached: true, kept: false }), /ไม่เกิน 2 MB.*ค้นหาข้อความไม่ได้/);
+  assert.match(targetNote({ outputBytes: 3_000_000, targetLabel: "2 MB", pageCount: 3, reached: false, kept: false }), /ยังเกิน 2 MB/);
+  assert.deepEqual(TARGET_SIZES.map((size) => size.label), ["2 MB", "1 MB", "500 KB"]);
+});

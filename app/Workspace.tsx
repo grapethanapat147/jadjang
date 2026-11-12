@@ -37,7 +37,10 @@ import { yieldToBrowser } from "./lib/yield-to-browser";
 import { isImageOfFormat, verifyArchiveEntryCount, type ImageFormat } from "./lib/verify-output";
 import {
   COMPRESSION_SETTINGS,
+  TARGET_SIZES,
   buildCompressedPdf,
+  buildPdfUnderSize,
+  targetNote,
   buildImageArchive,
   compressionNote,
   type CompressionLevel,
@@ -77,6 +80,7 @@ import {
   blackOut,
   compressPhoto,
   dragToRect,
+  idCopyLines,
   imageFileToPng,
   photoNote,
   renderTextStamp,
@@ -161,6 +165,8 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
   const [redactions, setRedactions] = useState<Record<string, NormalizedRect[]>>({});
   const [metadata, setMetadata] = useState<{ key: string; entries: MetadataEntry[] } | null>(null);
   const [compressionLevel, setCompressionLevel] = useState<CompressionLevel>("balanced");
+  /** Bytes the result must fit under, or null to pick a sharpness level by hand. */
+  const [compressTarget, setCompressTarget] = useState<number | null>(null);
   const [convertFormat, setImageFormat] = useState<ImageFormat>("jpg");
   const [result, setResult] = useState<ResultFile | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -749,6 +755,25 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
         await runImageCompress();
       } else if (PDF_TRANSFORMS.has(activeTool)) {
         await runPdfTransform(activeTool);
+      } else if (activeTool === "compress" && compressTarget !== null) {
+        const target = TARGET_SIZES.find((size) => size.bytes === compressTarget) ?? TARGET_SIZES[0];
+        // A file that already fits is left sharp and searchable rather than turned into pictures.
+        const original = await buildPdf(sources, pages);
+        const kept = original.length <= target.bytes;
+        const result = kept
+          ? { bytes: original, reached: true }
+          : await buildPdfUnderSize(pages, target.bytes, outputDeps);
+        await verifyPdfPageCount(result.bytes, pages.length);
+        if (result.reached && result.bytes.length > target.bytes) {
+          throw new Error(`ไฟล์ที่ได้ใหญ่กว่า ${target.label} ระบบจึงหยุดดาวน์โหลดเพื่อความปลอดภัย`);
+        }
+        setDownloadResult(
+          new Blob([result.bytes as BlobPart], { type: "application/pdf" }),
+          `จัดแจง-ไม่เกิน-${target.label.replace(" ", "")}.pdf`,
+          "pdf",
+          targetNote({ outputBytes: result.bytes.length, targetLabel: target.label, pageCount: pages.length, reached: result.reached, kept }),
+          pages.length,
+        );
       } else if (activeTool === "compress") {
         const bytes = await buildCompressedPdf(pages, compressionLevel, outputDeps);
         await verifyPdfPageCount(bytes, pages.length);
@@ -830,6 +855,11 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
   }
 
   async function watermarkStamp(): Promise<PngStamp> {
+    if (toolOptions.watermarkKind === "id-copy") {
+      const lines = idCopyLines(toolOptions.idPurpose, new Date());
+      if (!lines) throw new Error("กรุณาบอกว่าสำเนานี้ใช้สำหรับอะไร เช่น เปิดบัญชีธนาคาร ABC");
+      return renderTextStamp(lines, "#1f3a8a");
+    }
     if (toolOptions.watermarkKind === "image") {
       if (!watermarkImage) throw new Error("ยังไม่ได้เลือกรูปโลโก้สำหรับลายน้ำ");
       return watermarkImage;
@@ -859,14 +889,18 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
       note = `ใส่เลขหน้าครบ ${pages.length} หน้า และตรวจจำนวนหน้าแล้ว`;
     } else if (tool === "watermark") {
       const stamp = await watermarkStamp();
-      const diagonal = toolOptions.watermarkPlacement === "diagonal";
+      const idCopy = toolOptions.watermarkKind === "id-copy";
+      const diagonal = idCopy || toolOptions.watermarkPlacement === "diagonal";
       bytes = await stampImage(
         base,
         stamp,
-        diagonal ? { kind: "diagonal", widthRatio: 0.62 } : { kind: "corner", corner: "bottom-right", widthRatio: 0.24 },
-        { opacity: diagonal ? 0.22 : 0.85 },
+        diagonal ? { kind: "diagonal", widthRatio: idCopy ? 0.7 : 0.62 } : { kind: "corner", corner: "bottom-right", widthRatio: 0.24 },
+        // The purpose on an ID copy has to stay readable; a decorative mark stays faint.
+        { opacity: idCopy ? 0.5 : diagonal ? 0.22 : 0.85 },
       );
-      note = `ใส่ลายน้ำครบ ${pages.length} หน้า และตรวจจำนวนหน้าแล้ว`;
+      note = idCopy
+        ? `เขียนกำกับสำเนาครบ ${pages.length} หน้า และตรวจจำนวนหน้าแล้ว`
+        : `ใส่ลายน้ำครบ ${pages.length} หน้า และตรวจจำนวนหน้าแล้ว`;
     } else if (tool === "sign") {
       const pageNumber = Math.min(toolOptions.signPage ?? pages.length, pages.length);
       bytes = await stampImage(
@@ -991,11 +1025,14 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
 
   const primaryAction = useMemo(() => {
     if (activeTool === "split") return `แยก ${selectedIds.size} หน้าที่เลือก`;
-    if (activeTool === "compress") return "บีบอัดและตรวจผลลัพธ์";
+    if (activeTool === "compress") {
+      const target = TARGET_SIZES.find((size) => size.bytes === compressTarget);
+      return target ? `บีบให้ไม่เกิน ${target.label}` : "บีบอัดและตรวจผลลัพธ์";
+    }
     if (activeTool === "convert") return hasPdf ? `แปลงเป็น ${convertFormat.toUpperCase()}` : "สร้าง PDF จากรูป";
     if (activeTool === "merge") return "รวมเป็น PDF เดียว";
     if (activeTool === "page-numbers") return "ใส่เลขหน้า";
-    if (activeTool === "watermark") return "ใส่ลายน้ำ";
+    if (activeTool === "watermark") return toolOptions.watermarkKind === "id-copy" ? "เขียนกำกับสำเนา" : "ใส่ลายน้ำ";
     if (activeTool === "sign") return "วางลายเซ็น";
     if (activeTool === "redact") return redaction.marks ? `ปิดทึบ ${redaction.marks} จุด` : "ลากกรอบก่อนปิดทึบ";
     if (activeTool === "strip-metadata") return "ลบข้อมูลแฝง";
@@ -1003,7 +1040,7 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
     if (activeTool === "n-up") return `จัด ${toolOptions.perSheet} หน้าต่อแผ่น`;
     if (activeTool === "image-compress") return pages.length > 1 ? `ย่อ ${pages.length} รูป` : "ย่อรูป";
     return "สร้าง PDF พร้อมส่ง";
-  }, [activeTool, convertFormat, hasPdf, selectedIds.size, redaction.marks, toolOptions.perSheet, pages.length]);
+  }, [activeTool, convertFormat, hasPdf, selectedIds.size, redaction.marks, toolOptions.perSheet, pages.length, compressTarget, toolOptions.watermarkKind]);
 
   return (
     <main className="app-shell" id="top">
@@ -1140,6 +1177,22 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
               {activeTool === "compress" && (
                 <>
                   <fieldset className="option-group">
+                    <legend>ขนาดไฟล์ที่ต้องการ</legend>
+                    {[{ bytes: null, label: "เลือกระดับความคมชัดเอง", hint: "ไม่บังคับขนาด" }, ...TARGET_SIZES.map((size) => ({
+                      bytes: size.bytes as number | null,
+                      label: `ไม่เกิน ${size.label}`,
+                      hint: size.bytes === TARGET_SIZES[0].bytes ? "เช่น เอกสารแนบสมัคร TCAS" : "สำหรับระบบที่จำกัดขนาดไฟล์แนบ",
+                    }))].map((option) => {
+                      const id = `compress-target-${option.bytes ?? "none"}`;
+                      return (
+                        <label key={id} htmlFor={id} aria-label={option.label} className={compressTarget === option.bytes ? "selected" : ""}>
+                          <input id={id} type="radio" name="compress-target" checked={compressTarget === option.bytes} onChange={() => { setCompressTarget(option.bytes); setResult(null); }} />
+                          <span><strong>{option.label}</strong><small>{option.hint}</small></span>
+                        </label>
+                      );
+                    })}
+                  </fieldset>
+                  {compressTarget === null && <fieldset className="option-group">
                     <legend>ระดับการบีบอัด</legend>
                     {(Object.keys(COMPRESSION_SETTINGS) as CompressionLevel[]).map((level) => (
                       <label
@@ -1158,8 +1211,12 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
                         <span><strong>{COMPRESSION_SETTINGS[level].label}</strong><small>{level === "small" ? "เหมาะกับการส่งแบบฟอร์ม" : level === "balanced" ? "แนะนำสำหรับงานทั่วไป" : "เหมาะกับเอกสารภาพ"}</small></span>
                       </label>
                     ))}
-                  </fieldset>
-                  <p className="flatten-warning">โหมดนี้แปลงแต่ละหน้าเป็นภาพเพื่อให้ไฟล์เล็กลง จึงค้นหาหรือเลือกข้อความเดิมไม่ได้</p>
+                  </fieldset>}
+                  <p className="flatten-warning">
+                    {compressTarget === null
+                      ? "โหมดนี้แปลงแต่ละหน้าเป็นภาพเพื่อให้ไฟล์เล็กลง จึงค้นหาหรือเลือกข้อความเดิมไม่ได้"
+                      : "ถ้าไฟล์เดิมไม่เกินขนาดอยู่แล้วจะไม่แตะ ถ้าเกิน ระบบจะลองความคมชัดจากสูงลงต่ำจนได้ขนาด โดยแต่ละหน้าจะเป็นภาพ"}
+                  </p>
                 </>
               )}
               {activeTool === "convert" && hasPdf && (
