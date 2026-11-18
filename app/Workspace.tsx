@@ -62,7 +62,7 @@ import { pageBucket } from "./lib/usage";
 import { reportUsage, reportVisitOnce } from "./lib/report-usage";
 import { GAME_MODE_CHANGE_EVENT, readGameMode, subscribeGameMode, writeGameMode } from "./lib/game-mode";
 import { Hoop, throwIntoHoop } from "./Hoop";
-import { TOOLS, TOOL_CATEGORIES, toolById, toolFromPath, toolPath, type ToolCategory, type ToolId } from "./lib/tools";
+import { TOOLS, TOOL_CATEGORIES, toolById, toolFromPath, toolPath, type JobDefinition, type ToolCategory, type ToolId } from "./lib/tools";
 import {
   addPageNumbers,
   nUp,
@@ -146,7 +146,7 @@ function friendlyError(error: unknown) {
   return message || "เกิดข้อผิดพลาดระหว่างประมวลผล กรุณาลองใหม่";
 }
 
-export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; toolPage: boolean }) {
+export function Workspace({ initialTool, toolPage, initialJob = null }: { initialTool: ToolId; toolPage: boolean; initialJob?: JobDefinition | null }) {
   const [sources, setSources] = useState<SourceRecord[]>([]);
   const [pages, setPages] = useState<WorkspacePage[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -156,6 +156,8 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
   const [detailBox, setDetailBox] = useState<RenderBox | null>(null);
   const [activeTool, setActiveTool] = useState<ToolId>(initialTool);
   const [onToolPage, setOnToolPage] = useState(toolPage);
+  /** Set on a job page until another tool is picked, which also moves the address off it. */
+  const [job, setJob] = useState(initialJob);
   // A tool's own page opens on its group, so on a phone the upload box is a
   // couple of cards down rather than thirteen.
   const [category, setCategory] = useState<ToolCategory | "all">(toolPage ? toolById(initialTool).category : "all");
@@ -166,7 +168,7 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
   const [metadata, setMetadata] = useState<{ key: string; entries: MetadataEntry[] } | null>(null);
   const [compressionLevel, setCompressionLevel] = useState<CompressionLevel>("balanced");
   /** Bytes the result must fit under, or null to pick a sharpness level by hand. */
-  const [compressTarget, setCompressTarget] = useState<number | null>(null);
+  const [compressTarget, setCompressTarget] = useState<number | null>(initialJob?.compressTarget ?? null);
   const [convertFormat, setImageFormat] = useState<ImageFormat>("jpg");
   const [result, setResult] = useState<ResultFile | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -987,6 +989,7 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
     setActiveTool(toolId);
     setResult(null);
     setOnToolPage(true);
+    setJob(null);
     // The address follows the tool, so what is in the bar can be shared as is.
     window.history.replaceState(null, "", toolPath(toolId));
     document.title = `${toolById(toolId).title} | จัดแจง`;
@@ -1063,9 +1066,9 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
         <div className="tools-heading">
           <div>
             <p className="section-label">PDF Tools · {TOOLS.length} เครื่องมือ</p>
-            <h1 id="tools-title">{onToolPage ? activeToolOption.label : "เลือกสิ่งที่ต้องการทำ"}</h1>
+            <h1 id="tools-title">{job ? job.heading : onToolPage ? activeToolOption.label : "เลือกสิ่งที่ต้องการทำ"}</h1>
           </div>
-          <p>{onToolPage ? `${activeToolOption.detail} ทำงานบนอุปกรณ์ของคุณ ไม่ต้องอัปโหลดไฟล์` : "เลือกเครื่องมือ แล้วอัปโหลดไฟล์เพื่อดู Preview และจัดการต่อได้ทันที"}</p>
+          <p>{job ? job.intro : onToolPage ? `${activeToolOption.detail} ทำงานบนอุปกรณ์ของคุณ ไม่ต้องอัปโหลดไฟล์` : "เลือกเครื่องมือ แล้วอัปโหลดไฟล์เพื่อดู Preview และจัดการต่อได้ทันที"}</p>
         </div>
         <div className="tool-filter" role="group" aria-label="กรองเครื่องมือตามหมวด">
           {TOOL_CATEGORIES.map((entry) => (
@@ -1406,6 +1409,14 @@ export function Workspace({ initialTool, toolPage }: { initialTool: ToolId; tool
           </div>
         )}
       </section>
+
+      {job && (
+        <section className="job-guide" aria-labelledby="job-guide-title">
+          <h2 id="job-guide-title">วิธีใช้</h2>
+          <ol>{job.steps.map((step) => <li key={step}>{step}</li>)}</ol>
+          <p>{job.note}</p>
+        </section>
+      )}
 
       {detailPage && (
         <div

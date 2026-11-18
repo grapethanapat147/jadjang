@@ -134,3 +134,25 @@ test("an unknown tool address is a 404, not an empty workspace", async () => {
   const response = await render("/not-a-tool");
   assert.equal(response.status, 404);
 });
+
+// ------------------------------------------------------------- job pages --
+
+test("each Thai job page opens its tool set up for that job, with a how-to", async () => {
+  const { JOBS } = await import("../app/lib/tools.ts");
+  for (const job of JOBS) {
+    const response = await render(`/${job.slug}`);
+    assert.equal(response.status, 200, `/${job.slug}`);
+    const html = await response.text();
+    assert.ok(html.includes(`<title>${job.title} | จัดแจง</title>`), `${job.slug} title`);
+    assert.ok(html.includes(`<h1 id="tools-title">${job.heading}</h1>`), `${job.slug} heading`);
+    assert.match(html, new RegExp(`id="tool-tab-${job.tool}"[^>]*aria-selected="true"`), `${job.slug} opens on its tool`);
+    assert.match(html, new RegExp(`<link rel="canonical" href="[^"]*/${job.slug}"`), `${job.slug} canonical`);
+    assert.match(html, /<section class="job-guide"/, `${job.slug} how-to`);
+    for (const step of job.steps) assert.ok(html.includes(step.replaceAll('"', "&quot;")), `${job.slug} step`);
+  }
+});
+
+test("plain tool pages carry no job how-to", async () => {
+  const html = await (await render("/compress-pdf")).text();
+  assert.doesNotMatch(html, /job-guide/);
+});
