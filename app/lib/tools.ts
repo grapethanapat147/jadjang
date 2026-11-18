@@ -145,7 +145,76 @@ export function toolPath(id: ToolId): string {
   return `/${toolById(id).slug}`;
 }
 
-/** The tool a path names, so a deep link opened offline still lands on its tool. */
+/**
+ * A page for one everyday Thai job, built on an existing tool: its own
+ * address and wording, the tool opened with that job's settings, and a short
+ * how-to. Few on purpose — each one is a job people actually search for.
+ */
+export type JobDefinition = {
+  slug: string;
+  tool: ToolId;
+  title: string;
+  description: string;
+  heading: string;
+  intro: string;
+  steps: readonly string[];
+  note: string;
+  /** Bytes the compress tool opens set to fit under. */
+  compressTarget?: number;
+};
+
+export const JOBS: readonly JobDefinition[] = [
+  {
+    slug: "compress-pdf-2mb", tool: "compress",
+    title: "บีบไฟล์ PDF ให้ไม่เกิน 2 MB สำหรับสมัคร TCAS และสมัครงาน ฟรี",
+    description: "ลดขนาดไฟล์ PDF และเอกสารสแกนให้ไม่เกิน 2 MB ก่อนแนบสมัครเรียนหรือสมัครงานออนไลน์ ทำงานบนอุปกรณ์ของคุณ ไม่ต้องอัปโหลด",
+    heading: "บีบ PDF ให้ไม่เกิน 2 MB",
+    intro: "ระบบรับสมัครออนไลน์หลายแห่ง เช่น TCAS มักให้แนบเอกสารไม่เกิน 2 MB หน้านี้ตั้งค่าไว้ให้แล้ว ใส่ไฟล์แล้วกดบีบได้เลย",
+    steps: [
+      "ใส่ไฟล์ PDF หรือรูปสแกนเอกสาร ใส่ได้หลายไฟล์ ระบบจะรวมเป็นไฟล์เดียว",
+      "ตรวจว่าเลือก \"ไม่เกิน 2 MB\" ไว้ แล้วกดบีบ ระบบจะเลือกความคมชัดที่สูงที่สุดที่ยังได้ขนาดตามนั้น",
+      "ดาวน์โหลดไฟล์ แล้วเปิดดูว่าตัวหนังสืออ่านออกก่อนแนบ",
+    ],
+    note: "แต่ละที่กำหนดขนาดและชนิดไฟล์ไม่เหมือนกัน ตรวจประกาศของที่ที่สมัครอีกครั้ง ถ้าต้องการเล็กกว่านี้ เลือก 1 MB หรือ 500 KB ได้",
+    compressTarget: 2 * 1024 * 1024,
+  },
+  {
+    slug: "id-card-copy", tool: "watermark",
+    title: "ใส่ลายน้ำสำเนาบัตรประชาชน ระบุใช้สำหรับและวันที่ ฟรี",
+    description: "เขียนกำกับสำเนาบัตรประชาชนว่าสำเนาถูกต้อง ใช้สำหรับอะไร และวันที่ ทับลงบนสำเนาก่อนส่ง ช่วยกันคนนำสำเนาไปใช้ที่อื่น ไฟล์ไม่ออกจากอุปกรณ์",
+    heading: "ลายน้ำสำเนาบัตรประชาชน",
+    intro: "ธนาคารแนะนำให้เขียนบนสำเนาบัตรว่าใช้ทำอะไรและวันที่เท่าไร ถ้าสำเนาหลุดไป คนอื่นจะนำไปใช้ต่อได้ยาก หน้านี้เขียนข้อความให้ครบในครั้งเดียว",
+    steps: [
+      "ใส่รูปถ่ายหรือไฟล์สแกนสำเนาบัตร",
+      "พิมพ์ว่าใช้สำหรับอะไร เช่น เปิดบัญชีธนาคาร ระบบจะเติมคำว่าสำเนาถูกต้องและวันที่ของวันนี้ให้",
+      "กดเขียนกำกับสำเนา แล้วดาวน์โหลดไฟล์ไปส่ง",
+    ],
+    note: "ลายน้ำไม่ใช่ลายเซ็น ถ้าที่ที่ส่งให้เซ็นรับรองสำเนา ใช้เครื่องมือลงลายเซ็นต่อ หรือพิมพ์ออกมาเซ็นเอง",
+  },
+  {
+    slug: "merge-pdf-for-school", tool: "merge",
+    title: "รวมไฟล์ส่งงานครูเป็น PDF ไฟล์เดียว รวมรูปและ PDF ฟรี",
+    description: "รวมรูปถ่ายการบ้านและไฟล์ PDF หลายไฟล์ให้เป็น PDF เดียวตามลำดับ ก่อนส่งงานครูทาง LINE หรือ Google Classroom ไม่ต้องลงแอป ไม่ต้องอัปโหลด",
+    heading: "รวมไฟล์ส่งงานครู",
+    intro: "ถ่ายรูปการบ้านหลายหน้า หรือมีหลายไฟล์ รวมเป็น PDF เดียวให้ครูเปิดดูทีเดียวจบ ทำได้บนมือถือโดยไม่ต้องลงแอป",
+    steps: [
+      "ใส่รูปหรือไฟล์ PDF ทั้งหมดที่จะส่ง",
+      "ลากเรียงหน้าให้ถูกลำดับ หมุนหน้าที่กลับด้าน หรือลบหน้าที่ไม่ใช้",
+      "กดรวม แล้วดาวน์โหลด PDF ไปส่งครู",
+    ],
+    note: "ถ้าไฟล์ใหญ่เกินกว่าที่ช่องทางส่งงานรับ ใช้เครื่องมือบีบอัด PDF ต่อได้",
+  },
+];
+
+export function jobBySlug(slug: string): JobDefinition | undefined {
+  return JOBS.find((job) => job.slug === slug);
+}
+
+/**
+ * The tool a path names, so a deep link opened offline still lands on its tool.
+ * shortcut: offline, a job page opens its tool without the job's wording; add a jobFromPath if that matters.
+ */
 export function toolFromPath(pathname: string): ToolId | null {
-  return toolBySlug(decodeURIComponent(pathname).replace(/^\/+|\/+$/g, ""))?.id ?? null;
+  const slug = decodeURIComponent(pathname).replace(/^\/+|\/+$/g, "");
+  return toolBySlug(slug)?.id ?? jobBySlug(slug)?.tool ?? null;
 }

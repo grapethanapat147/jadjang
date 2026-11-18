@@ -11,6 +11,9 @@ Tools live in one registry, `app/lib/tools.ts` (13 as of 2026-11-06): organize, 
 convert, plus page numbers, watermark, signature, redaction, metadata removal, A4 resizing, pages per
 sheet and photo shrinking. Each has its own page at `/{slug}` (`app/[tool]/page.tsx`) rendering the same
 `Workspace` — tool pages exist so a search for one job lands on it, not to add marketing content.
+The same registry holds `JOBS`: a few pages for everyday Thai jobs (TCAS 2 MB, ID card copy, merging
+homework) served by the same route, opening an existing tool with that job's preset plus a 3-step how-to.
+Add one only for a job people actually search for; never mass-generate them. New pages go in `public/sitemap.xml`.
 Keep the experience friendly, readable, mobile-first, and suitable for nontechnical Thai users.
 
 ## Non-negotiable requirements
